@@ -1,0 +1,1 @@
+@livewire(\App\Filament\Resources\SettingResource\Widgets\VoucherList::class)

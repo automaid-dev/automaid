@@ -1,0 +1,1 @@
+@livewire(\App\Filament\Resources\UserResource\Widgets\CreateAddressListWidget::class)

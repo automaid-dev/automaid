@@ -1,0 +1,1 @@
+@livewire(\App\Filament\Resources\UserResource\Widgets\Edit\CityList::class, ['userId' => $this->record->id])

@@ -1,0 +1,1 @@
+@livewire(\App\Filament\Resources\CommissionResource\Widgets\ListPendingPayout::class)

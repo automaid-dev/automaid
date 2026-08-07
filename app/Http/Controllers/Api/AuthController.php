@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Seshac\Otp\Otp;
@@ -165,7 +166,7 @@ class AuthController extends Controller
     {
         try {
             $validateEmail = Validator::make($request->all(), [
-                'email' => 'required|string|email|max:255|unique:users',             
+                'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')],
             ]);
             if ($validateEmail->fails()) {
                 return response()->json([
@@ -175,15 +176,20 @@ class AuthController extends Controller
                 ]);
             }
 
-            // check user
+            // check user — include soft-deleted rows too, since `email`
+            // has a hard unique DB constraint: if we only checked
+            // non-deleted rows here, a soft-deleted row with this email
+            // would still be sitting in the table and re-registering
+            // would crash on a duplicate-key error at the INSERT step,
+            // even though the validation above (correctly) allowed it.
             $email = $request->email;
-            $user = User::where('email', $email)->first();
+            $user = User::withTrashed()->where('email', $email)->first();
 
-            // new user
-            if (!$user) {
+            // new user, or a previously soft-deleted account re-registering
+            if (!$user || $user->trashed()) {
                 $validateUser = Validator::make($request->all(), [
                     'name' => 'required|string|max:255',
-                    'email' => 'required|string|email|max:255|unique:users',
+                    'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')->ignore($user?->id)],
                     'mobile_no' => [
                         'required',
                         'numeric',
@@ -201,18 +207,34 @@ class AuthController extends Controller
                     ]);
                 }
 
-                // insert user
-                $user = User::create([
-                    'name' => $request->name,
-                    'email' => $request->email,
-                    'mobile_no' => $request->mobile_no,
-                    'password' => Hash::make($request->password),
-                    'status' => User::PENDING,
-                    'is_active' => false,
-                    'email_verified_at' => now(),
-                    'dob' => $request->dob ?? null,
-                ]);
-                $user->assignRole('customer');
+                if ($user && $user->trashed()) {
+                    // Restore and reuse the same row rather than inserting a
+                    // new one — avoids the duplicate-key crash on `email`,
+                    // and keeps this user_id intact for any historical
+                    // orders/bookings/addresses still referencing it.
+                    $user->restore();
+                    $user->name = $request->name;
+                    $user->mobile_no = $request->mobile_no;
+                    $user->password = Hash::make($request->password);
+                    $user->status = User::PENDING;
+                    $user->is_active = false;
+                    $user->email_verified_at = now();
+                    $user->dob = $request->dob ?? null;
+                    $user->save();
+                } else {
+                    // insert user
+                    $user = User::create([
+                        'name' => $request->name,
+                        'email' => $request->email,
+                        'mobile_no' => $request->mobile_no,
+                        'password' => Hash::make($request->password),
+                        'status' => User::PENDING,
+                        'is_active' => false,
+                        'email_verified_at' => now(),
+                        'dob' => $request->dob ?? null,
+                    ]);
+                    $user->assignRole('customer');
+                }
 
                 $sms = OneWaySmsService::make();
                 $send = $sms->processOtp($user->mobile_no);

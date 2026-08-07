@@ -48,12 +48,20 @@ class BagResource extends Resource
      */
     public static function getEloquentQuery(): Builder
     {
+        // Previously this only showed bags whose order was already
+        // Order::PAID and whose own status_payment was Bag::PAID —
+        // meaning a purchase stuck pending (payment gateway callback
+        // never arrived, or still awaiting payment) was invisible here
+        // entirely, with no way for an admin to even find it to
+        // investigate. The Status column below already badges
+        // processing/delivered/cancelled — showing every purchase_bag
+        // order here (regardless of payment status) lets that column do
+        // its job instead of the query silently hiding anything that
+        // hasn't succeeded yet.
         return parent::getEloquentQuery()
             ->whereHas('order', function ($q) {
-                $q->where('status', Order::PAID);
                 $q->where('order_type', Order::PURCHASE_BAG); // order_type purchase_bag only
-            })
-            ->where('status_payment', Bag::PAID);
+            });
     }
 
     /**
@@ -109,10 +117,32 @@ class BagResource extends Resource
                     })
                     ->formatStateUsing(fn (string $state) => strtoupper($state))
                     ->sortable(),
+                TextColumn::make('status_payment')
+                    ->label('Payment Status')
+                    ->badge()
+                    ->color(fn(?string $state): string => match ($state) {
+                        'paid' => 'success',
+                        'pending' => 'warning',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (?string $state) => strtoupper($state ?? 'unknown'))
+                    ->sortable(),
             ])
             ->defaultSort('id', 'desc')            
             ->filters([
-                //
+                Tables\Filters\SelectFilter::make('status_payment')
+                    ->label('Payment Status')
+                    ->options([
+                        'paid' => 'Paid',
+                        'pending' => 'Pending',
+                    ]),
+                Tables\Filters\SelectFilter::make('status')
+                    ->label('Fulfillment Status')
+                    ->options([
+                        'processing' => 'Processing',
+                        'delivered' => 'Delivered',
+                        'cancelled' => 'Cancelled',
+                    ]),
             ])
             ->actions([
                 Tables\Actions\EditAction::make()->label(''),

@@ -26,6 +26,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class FiuuController extends Controller
 {
@@ -46,6 +47,16 @@ class FiuuController extends Controller
      */
     public function getReturn(Request $request)
     {
+        // Diagnostic log: confirms whether Fiuu's server-to-server
+        // callback is actually reaching this endpoint at all. Check
+        // storage/logs/laravel.log for 'Fiuu webhook hit: getReturn' if
+        // payments show successful on Fiuu's own page but never flip
+        // to paid in this app — an empty log here for a known test
+        // means the call never arrived (check the Notification URL
+        // configured in the Fiuu merchant dashboard, and that this
+        // server is reachable over HTTPS from Fiuu's servers).
+        Log::info('Fiuu webhook hit: getReturn', ['ip' => $request->ip(), 'body' => $request->getContent()]);
+
         // local environment
         if (app()->environment('local')) {
             $data = [
@@ -175,6 +186,16 @@ class FiuuController extends Controller
      */
     public function getNotification(Request $request)
     {
+        // Diagnostic log: confirms whether Fiuu's server-to-server
+        // callback is actually reaching this endpoint at all. Check
+        // storage/logs/laravel.log for 'Fiuu webhook hit: getNotification' if
+        // payments show successful on Fiuu's own page but never flip
+        // to paid in this app — an empty log here for a known test
+        // means the call never arrived (check the Notification URL
+        // configured in the Fiuu merchant dashboard, and that this
+        // server is reachable over HTTPS from Fiuu's servers).
+        Log::info('Fiuu webhook hit: getNotification', ['ip' => $request->ip(), 'body' => $request->getContent()]);
+
         // local environment
         if (app()->environment('local')) {
             $data = [
@@ -317,16 +338,6 @@ class FiuuController extends Controller
                     // update order
                     $order->booking_id = $booking->id;
                     $order->save();
-
-                    // count this booking against the subscriber's plan order
-                    // quota for this cycle, if the paying user has an active
-                    // subscription (bronze/silver cap; platinum & legacy
-                    // no-plan subscriptions are unlimited but still tracked)
-                    $paying_subscription = $order->user->subscribe ?? null;
-                    if ($paying_subscription) {
-                        $paying_subscription->orders_used_current_cycle = $paying_subscription->orders_used_current_cycle + 1;
-                        $paying_subscription->save();
-                    }
 
                     // check voucher
                     if ($order->voucher_code) {
@@ -591,6 +602,16 @@ class FiuuController extends Controller
      */
     public function getCallback(Request $request)
     {
+        // Diagnostic log: confirms whether Fiuu's server-to-server
+        // callback is actually reaching this endpoint at all. Check
+        // storage/logs/laravel.log for 'Fiuu webhook hit: getCallback' if
+        // payments show successful on Fiuu's own page but never flip
+        // to paid in this app — an empty log here for a known test
+        // means the call never arrived (check the Notification URL
+        // configured in the Fiuu merchant dashboard, and that this
+        // server is reachable over HTTPS from Fiuu's servers).
+        Log::info('Fiuu webhook hit: getCallback', ['ip' => $request->ip(), 'body' => $request->getContent()]);
+
         // local environment
         if (app()->environment('local')) {
             $data = [
@@ -733,16 +754,6 @@ class FiuuController extends Controller
                     // update order
                     $order->booking_id = $booking->id;
                     $order->save();
-
-                    // count this booking against the subscriber's plan order
-                    // quota for this cycle, if the paying user has an active
-                    // subscription (bronze/silver cap; platinum & legacy
-                    // no-plan subscriptions are unlimited but still tracked)
-                    $paying_subscription = $order->user->subscribe ?? null;
-                    if ($paying_subscription) {
-                        $paying_subscription->orders_used_current_cycle = $paying_subscription->orders_used_current_cycle + 1;
-                        $paying_subscription->save();
-                    }
 
                     // check voucher
                     if ($order->voucher_code) {

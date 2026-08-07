@@ -6,8 +6,14 @@ if (! function_exists('get_country_id')) {
         if(request('clearCache')) {
             cache()->forget('get_country_id');
         }
-        return cache()->remember('get_country_id', 60, function () use ($name) {
-            return \App\Models\Country::where('name', $name)->first()->toArray();
+        return cache()->remember('get_country_id:' . strtolower(trim($name)), 60, function () use ($name) {
+            // Case-insensitive match — this is fed from free-text mobile
+            // app input (e.g. "malaysia" vs "Malaysia"), and an exact
+            // case-sensitive match previously crashed the whole request
+            // with "Call to a member function toArray() on null" whenever
+            // casing didn't line up exactly.
+            $country = \App\Models\Country::whereRaw('LOWER(name) = ?', [strtolower(trim($name))])->first();
+            return $country ? $country->toArray() : null;
         });
     }
 }
@@ -18,8 +24,10 @@ if (! function_exists('get_state_id')) {
         if(request('clearCache')) {
             cache()->forget('get_state_id');
         }
-        return cache()->remember('get_state_id', 60, function () use ($name) {
-            return \App\Models\State::where('name', $name)->first()->toArray();
+        return cache()->remember('get_state_id:' . strtolower(trim($name)), 60, function () use ($name) {
+            // See get_country_id() above — same case-insensitivity + null-safety fix.
+            $state = \App\Models\State::whereRaw('LOWER(name) = ?', [strtolower(trim($name))])->first();
+            return $state ? $state->toArray() : null;
         });
     }
 }

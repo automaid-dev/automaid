@@ -7,39 +7,51 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "barryvdh/laravel-debugbar": "^4.4",
         "filament/actions": "^3.2",
-        "filament/filament": "^3.3",
+        "filament/filament": "^3.2",
         "filament/forms": "^3.2",
         "filament/infolists": "^3.2",
-        "filament/notifications": "^3.3",
-        "filament/tables": "^3.3",
-        "filament/widgets": "^3.3",
-        "laravel/framework": "^13.8",
-        "laravel/sanctum": "^4.3",
-        "laravel/tinker": "^3.0",
-        "owen-it/laravel-auditing": "^14.0",
-        "predis/predis": "^3.5",
+        "filament/notifications": "^3.2",
+        "filament/tables": "^3.2",
+        "filament/widgets": "^3.2",
+        "fiuu/payment": "dev-main#1.0.1",
+        "guava/sqids-for-laravel": "^1.1",
+        "intervention/image": "^3.9",
+        "lab404/laravel-impersonate": "^1.7",
+        "laravel-notification-channels/telegram": "^5.0",
+        "laravel/framework": "^11.9",
+        "laravel/sanctum": "^4.0",
+        "laravel/tinker": "^2.9",
+        "league/flysystem-aws-s3-v3": "^3.0",
+        "opcodesio/log-viewer": "^3.12",
+        "owen-it/laravel-auditing": "^13.6",
+        "predis/predis": "2.0",
+        "razermerchantservices/payment": "^1.0.1",
         "seshac/otp-generator": "^0.0.8",
         "simplesoftwareio/simple-qrcode": "^4.2",
-        "spatie/laravel-permission": "^8.3",
-        "stechstudio/filament-impersonate": "^3.16"
+        "spatie/laravel-permission": "^6.9",
+        "stechstudio/filament-impersonate": "^3.14"
     },
     "require-dev": {
-        "barryvdh/laravel-debugbar": "^4.4",
+        "deployer/deployer": "^7.5",
         "fakerphp/faker": "^1.23",
-        "laravel/pail": "^1.2.5",
-        "laravel/pao": "^1.0.6",
-        "laravel/pint": "^1.27",
+        "laravel/pail": "^1.1",
+        "laravel/pint": "^1.13",
+        "laravel/sail": "^1.26",
         "mockery/mockery": "^1.6",
-        "nunomaduro/collision": "^8.6",
-        "phpunit/phpunit": "^12.5.12"
+        "nunomaduro/collision": "^8.1",
+        "phpunit/phpunit": "^11.0.1"
     },
     "autoload": {
         "psr-4": {
             "App\\": "app/",
             "Database\\Factories\\": "database/factories/",
             "Database\\Seeders\\": "database/seeders/"
-        }
+        },
+        "files": [
+            "app/Helpers/MainHelper.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {
@@ -65,7 +77,8 @@
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
-            "@php artisan package:discover --ansi"
+            "@php artisan package:discover --ansi",
+            "@php artisan filament:upgrade"
         ],
         "post-update-cmd": [
             "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
@@ -97,5 +110,17 @@
         }
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "repositories": [
+        {
+            "name": "fiuu",
+            "type": "vcs",
+            "url": "https://github.com/FiuuPayment/SDK-Fiuu_PHP"
+        },
+        {
+            "name": "razerms",
+            "url": "https://github.com/RazerMS/SDK-RazerMS_PHP",
+            "type": "vcs"
+        }
+    ]
 }

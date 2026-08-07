@@ -53,7 +53,6 @@ class SubscriptionController extends Controller
             }
 
             $validate = Validator::make($request->all(), [
-                'plan_code' => 'required|in:' . implode(',', Subscription::planCodes()),
                 'billing_name' => 'required',              
                 'billing_email' => 'required',              
                 'billing_phone' => 'required',              
@@ -80,18 +79,10 @@ class SubscriptionController extends Controller
                 ]);
             }
 
-            // get sub total
-            // -------------
-            // Price is always derived server-side from the chosen plan's
-            // Settings field — never trust $request->sub_total, which was
-            // only ever meant for the app to show a confirmation screen.
+            // get sub total 
             $setting = Setting::find(1);
-            $price = match ($request->plan_code) {
-                Subscription::BRONZE => $setting->subscription_bronze_price,
-                Subscription::SILVER => $setting->subscription_silver_price,
-                Subscription::PLATINUM => $setting->subscription_platinum_price,
-            };
-            $sub_total = $price ?? 0;
+            $price = $setting->subscription_price ?? 0;
+            $sub_total = $request->sub_total ?? $price;
 
             // get state
             $state = State::where('name', $request->billing_state)->first();
@@ -151,7 +142,6 @@ class SubscriptionController extends Controller
                     'status' => Subscription::PENDING,
                     'start_at' => $start,
                     'renew_at' => $end,
-                    'plan_code' => $request->plan_code,
                 ]
             );
 
@@ -178,8 +168,11 @@ class SubscriptionController extends Controller
                 'currency' => 'MYR',
             ]);
 
-            // return payment url
+            // return payment url (+ order_id so the app can verify
+            // payment status afterwards instead of just trusting the
+            // gateway redirect blindly)
             $data['url'] = $paymentUrl;
+            $data['order_id'] = $order->id;
             return response()->json([
                 'status' => true,
                 'data' => $data,
@@ -277,7 +270,6 @@ class SubscriptionController extends Controller
                     'start_at' => $subscription->start_at,
                     'renew_at' => $subscription->renew_at,
                     'previous_id' => $subscription->id,
-                    'plan_code' => $subscription->plan_code,
                 ]
             );
 
@@ -293,8 +285,11 @@ class SubscriptionController extends Controller
                 'currency' => 'MYR',
             ]);
 
-            // return payment url
+            // return payment url (+ order_id so the app can verify
+            // payment status afterwards instead of just trusting the
+            // gateway redirect blindly)
             $data['url'] = $paymentUrl;
+            $data['order_id'] = $order->id;
             return response()->json([
                 'status' => true,
                 'data' => $data,

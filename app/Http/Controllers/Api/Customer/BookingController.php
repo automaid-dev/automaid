@@ -38,24 +38,10 @@ class BookingController extends Controller
      * @param  [type] $price        [description]
      * @return [type]               [description]
      */
-    /**
-     * [calculateWashPrice description]
-     * @param  [type] $subscription    [description]
-     * @param  [type] $quantity        [description]
-     * @param  [type] $price           [description]
-     * @param  [type] $total_bag_free_wash [description]
-     * @param  bool   $has_quota       Whether the subscriber still has plan
-     *                                 order-quota remaining this cycle (see
-     *                                 Subscription::hasOrderQuotaRemaining()).
-     *                                 Ignored (treated as true) for legacy
-     *                                 callers that don't pass it, to avoid
-     *                                 breaking other call sites.
-     * @return [type]               [description]
-     */
-    public function calculateWashPrice($subscription, $quantity, $price, $total_bag_free_wash, $has_quota = true)
+    public function calculateWashPrice($subscription, $quantity, $price, $total_bag_free_wash)
     {
         $total = 0;
-        if ($subscription && $has_quota) {
+        if ($subscription) {
             if ($quantity <= $total_bag_free_wash) {
                 $total = 0;
             }
@@ -74,13 +60,12 @@ class BookingController extends Controller
      * @param  [type] $subscription [description]
      * @param  [type] $quantity     [description]
      * @param  [type] $price        [description]
-     * @param  bool   $has_quota    See calculateWashPrice() doc above.
      * @return [type]               [description]
      */
-    public function calculateDeliveryRate($subscription, $quantity, $price, $total_bag_free_delivery, $has_quota = true)
+    public function calculateDeliveryRate($subscription, $quantity, $price, $total_bag_free_delivery)
     {
         $total = 0;
-        if ($subscription && $has_quota) {
+        if ($subscription) {
             if ($quantity <= $total_bag_free_delivery) {
                 $total = 0;
             }
@@ -127,19 +112,13 @@ class BookingController extends Controller
             $setting = Setting::find(1);
 
             // check if user have subscription
-            $subscription = $user->subscribe;
-            $is_subscribe = $subscription ? 1 : 0;
-
-            // whether the subscriber still has plan order-quota left this
-            // cycle (bronze/silver are capped; platinum & legacy no-plan
-            // subscriptions are unlimited) — see Subscription::hasOrderQuotaRemaining()
-            $has_quota = $subscription ? $subscription->hasOrderQuotaRemaining($setting) : true;
+            $is_subscribe = $user->subscribe ? 1 : 0;
 
             // get wash price
-            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
+            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash);
 
             // get delivery charge
-            $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery, $has_quota);
+            $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
 
             return response()->json([
                 'status' => true,
@@ -468,23 +447,11 @@ class BookingController extends Controller
 
             // check if user have subscription
             // -------------------------------
-            $subscription = $user->subscribe;
-            $is_subscribe = $subscription ? 1 : 0;
-
-            // whether the subscriber still has plan order-quota left this
-            // cycle — see Subscription::hasOrderQuotaRemaining(). Legacy
-            // subscriptions with no plan_code, and platinum, are unlimited.
-            $has_quota = $subscription ? $subscription->hasOrderQuotaRemaining($setting) : true;
+            $is_subscribe = $user->subscribe ? 1 : 0;
 
             // get charge
-            // ----------
-            // Recomputed server-side from the same inputs calculateRate()
-            // used (rather than trusting $request->washing_charge /
-            // delivery_charge) so a tampered client value can't bypass the
-            // subscription quota check above — the client's earlier
-            // calculateRate() call was only ever for display purposes.
-            $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery, $has_quota);
-            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
+            $delivery_charge = $request->delivery_charge ?? 0;
+            $washing_charge = $request->washing_charge ?? 0;
             $tax_charge = $request->tax ?? 0;
             $addon_charge = $request->addon_charge ?? 0;
             $discount = $request->discount ?? 0;
@@ -720,15 +687,6 @@ class BookingController extends Controller
                 $order->booking_id = $booking->id;
                 $order->save();
 
-                // count this booking against the subscription's plan order
-                // quota for this cycle (bronze/silver cap; platinum &
-                // legacy no-plan subscriptions are unlimited, but we still
-                // track usage on them for visibility in the admin panel)
-                if ($is_subscribe && $subscription) {
-                    $subscription->orders_used_current_cycle = $subscription->orders_used_current_cycle + 1;
-                    $subscription->save();
-                }
-
                 // insert order status
                 // 01 - Waiting rider for pickup
                 // 11 - Pending for acceptance
@@ -804,8 +762,11 @@ class BookingController extends Controller
                     'currency' => 'MYR',
                 ]);
 
-                // return payment url
+                // return payment url (+ order_id so the app can verify
+                // payment status afterwards instead of just trusting the
+                // gateway redirect blindly)
                 $data['url'] = $paymentUrl;
+                $data['order_id'] = $order->id;
                 return response()->json([
                     'status' => true,
                     'data' => $data,

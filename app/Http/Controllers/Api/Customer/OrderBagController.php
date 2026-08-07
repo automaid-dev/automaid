@@ -71,10 +71,17 @@ class OrderBagController extends Controller
             $setting = Setting::find(1);
             $state = State::where('name', $request->billing_state)->first();
 
-            // get total
-            $sub_total = $request->sub_total;
-            $quantity = $request->quantity;
-            $grand_total = $request->grand_total;
+            // get total — recomputed server-side from the admin-set
+            // bag_price, never trusted from the client. A client-sent
+            // sub_total/grand_total here previously went straight into
+            // the order unchecked, meaning a stale/incorrect value on
+            // the app side (or a tampered request) would silently become
+            // the actual amount charged with no relation to quantity or
+            // the real bag price.
+            $quantity = (int) $request->quantity;
+            $bag_price = $setting->bag_price ?? 0;
+            $sub_total = $bag_price * $quantity;
+            $grand_total = $sub_total;
 
             // insert order
             $order = new Order();
@@ -222,7 +229,11 @@ class OrderBagController extends Controller
                 ]);
 
                 // return payment url
+                // return payment url (+ order_id so the app can verify
+                // payment status afterwards instead of just trusting the
+                // gateway redirect blindly)
                 $data['url'] = $paymentUrl;
+                $data['order_id'] = $order->id;
                 return response()->json([
                     'status' => true,
                     'data' => $data,

@@ -43,6 +43,25 @@ class AddressController extends Controller
                 ]);
             }
 
+            // resolve country/state — these are matched by name from
+            // free-text mobile app input, so a typo or unrecognised name
+            // is a real (if unlikely) possibility; fail cleanly instead of
+            // saving an address with a broken country_id/state_id.
+            $country = $request->country_name ? get_country_id($request->country_name) : null;
+            $state = $request->state_name ? get_state_id($request->state_name) : null;
+            if ($request->country_name && !$country) {
+                return response()->json([
+                    'status' => false,
+                    'message' => "Country \"{$request->country_name}\" is not recognised.",
+                ]);
+            }
+            if ($request->state_name && !$state) {
+                return response()->json([
+                    'status' => false,
+                    'message' => "State \"{$request->state_name}\" is not recognised.",
+                ]);
+            }
+
             // insert new address
             $address = new Address();
             $address->user_id = $user->id;
@@ -51,8 +70,8 @@ class AddressController extends Controller
             $address->block = $request->block ?? null;
             $address->address_line_1 = $request->address_line_1 ?? null;
             $address->address_line_2 = $request->address_line_2 ?? null;
-            $address->country_id = $request->country_name ? get_country_id($request->country_name)['id'] : null;
-            $address->state_id = $request->state_name ? get_state_id($request->state_name)['id'] : null;
+            $address->country_id = $country['id'] ?? null;
+            $address->state_id = $state['id'] ?? null;
             $address->postcode = $request->postcode ?? null;
             $address->city = $request->city ?? null;
             $address->address_title = $request->address_title ?? null;
@@ -61,6 +80,7 @@ class AddressController extends Controller
             $address->status = Address::ACTIVE;
             $address->save();
 
+            $address->load(['state', 'country']);
             $data['address'] = $address;
             return response()->json([
                 'status' => true,
@@ -122,14 +142,31 @@ class AddressController extends Controller
                 ]);  
             }
 
+            // resolve country/state — see saveAddress() for why this is
+            // checked explicitly rather than trusting the helper alone.
+            $country = $request->country_name ? get_country_id($request->country_name) : null;
+            $state = $request->state_name ? get_state_id($request->state_name) : null;
+            if ($request->country_name && !$country) {
+                return response()->json([
+                    'status' => false,
+                    'message' => "Country \"{$request->country_name}\" is not recognised.",
+                ]);
+            }
+            if ($request->state_name && !$state) {
+                return response()->json([
+                    'status' => false,
+                    'message' => "State \"{$request->state_name}\" is not recognised.",
+                ]);
+            }
+
             // update address
             $address->unit_no = $request->unit_no ?? null;
             $address->floor = $request->floor ?? null;
             $address->block = $request->block ?? null;
             $address->address_line_1 = $request->address_line_1 ?? null;
             $address->address_line_2 = $request->address_line_2 ?? null;
-            $address->country_id = $request->country_name ? get_country_id($request->country_name)['id'] : null;
-            $address->state_id = $request->state_name ? get_state_id($request->state_name)['id'] : null;
+            $address->country_id = $country['id'] ?? null;
+            $address->state_id = $state['id'] ?? null;
             $address->postcode = $request->postcode ?? null;
             $address->city = $request->city ?? null;
             $address->address_title = $request->address_title ?? null;
@@ -138,6 +175,7 @@ class AddressController extends Controller
             $address->save();
 
             // return address data
+            $address->load(['state', 'country']);
             $data['address'] = $address;
             return response()->json([
                 'status' => true,

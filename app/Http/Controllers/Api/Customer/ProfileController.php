@@ -35,7 +35,8 @@ class ProfileController extends Controller
             $data['user'] = $user->load([
                 'bags',
                 'bag_scans',
-                'addresses', 
+                'addresses.state',
+                'addresses.country',
                 'activities.order.booking.pickup_location', 
                 'activities.order.booking.customer_and_rider_status.status', 
                 'activities.order.booking.customer_and_rider_status.rider.user.rider', 

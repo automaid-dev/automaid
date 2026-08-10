@@ -260,7 +260,21 @@ class EditSubscription extends EditRecord
                                             Placeholder::make('details_plan_label')->label(false)->content('Plan'),
                                             Placeholder::make('details_plan')
                                                 ->label(false)
-                                                ->content('Auto Maid Subscription')
+                                                ->content(fn ($record) => $this->getPlanLabel($record))
+                                                ->extraAttributes(['class' => 'text-right'])
+                                                ->columnSpan(2),
+
+                                            Placeholder::make('details_free_bag_label')->label(false)->content('Free Bag Entitled'),
+                                            Placeholder::make('details_free_bag')
+                                                ->label(false)
+                                                ->content(fn ($record) => $this->getFreeBagEntitledLabel($record))
+                                                ->extraAttributes(['class' => 'text-right'])
+                                                ->columnSpan(2),
+
+                                            Placeholder::make('details_bags_used_label')->label(false)->content('Bags Utilised'),
+                                            Placeholder::make('details_bags_used')
+                                                ->label(false)
+                                                ->content(fn ($record) => (string) $record->orders_used_current_cycle)
                                                 ->extraAttributes(['class' => 'text-right'])
                                                 ->columnSpan(2),
 
@@ -321,5 +335,40 @@ class EditSubscription extends EditRecord
             $record->order->delivery_state ?? null,
             $record->order->delivery_country ?? null,
         ], fn ($val) => filled($val)));
+    }
+
+    /**
+     * Readable plan name for the "Plan" field — was previously a
+     * hardcoded "Auto Maid Subscription" string regardless of which
+     * plan the customer actually subscribed to. Falls back gracefully
+     * for older subscriptions created before plan_code existed.
+     */
+    protected function getPlanLabel($record): string
+    {
+        return match ($record->plan_code) {
+            \App\Models\Subscription::BRONZE => 'Bronze',
+            \App\Models\Subscription::SILVER => 'Silver',
+            \App\Models\Subscription::PLATINUM => 'Platinum',
+            default => 'Legacy Plan (no tier recorded)',
+        };
+    }
+
+    /**
+     * "N times free for 1st bag each order" / "Unlimited" — pulled live
+     * from Settings so this always matches whatever the admin has
+     * currently configured for that plan, not a hardcoded number.
+     */
+    protected function getFreeBagEntitledLabel($record): string
+    {
+        if ($record->plan_code === \App\Models\Subscription::PLATINUM) {
+            return 'Unlimited';
+        }
+        $setting = \App\Models\Setting::find(1);
+        $quota = match ($record->plan_code) {
+            \App\Models\Subscription::BRONZE => $setting->subscription_bronze_orders ?? null,
+            \App\Models\Subscription::SILVER => $setting->subscription_silver_orders ?? null,
+            default => null,
+        };
+        return $quota !== null ? "{$quota} times free for 1st bag each order" : 'Not available';
     }
 }

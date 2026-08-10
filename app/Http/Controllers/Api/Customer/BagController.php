@@ -29,8 +29,11 @@ class BagController extends Controller
                 ]);  
             }
 
-            // check purchased bags
-            if (count($user->bag_purchases) == 0) {
+            // check purchased bags — uses all_bag_purchases (not the
+            // paid-only bag_purchases relation used for booking quota
+            // checks elsewhere) so the customer can see a pending
+            // purchase in their own list, not just ones already paid.
+            if (count($user->all_bag_purchases) == 0) {
                 return response()->json([
                     'status' => false,
                     'message' => 'No purchased bag.',
@@ -38,7 +41,7 @@ class BagController extends Controller
             }
 
             // return data purchased bags
-            $data['bag_purchases'] = $user->bag_purchases;
+            $data['bag_purchases'] = $user->all_bag_purchases;
             return response()->json([
                 'status' => true,
                 'message' => 'Successfully retrieve purchased bags.',

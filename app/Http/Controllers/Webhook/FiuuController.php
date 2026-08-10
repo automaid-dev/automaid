@@ -89,6 +89,14 @@ class FiuuController extends Controller
 
             // check data
             $order              = Order::find($data['orderid']);
+            Log::info('Fiuu payment check', [
+                'orderid_requested' => $data['orderid'] ?? null,
+                'order_found' => $order ? true : false,
+                'order_type' => $order->order_type ?? null,
+                'order_status' => $order->status ?? null,
+                'check_payment' => $checkPayment,
+                'payment_status_code' => $data['status'] ?? null,
+            ]);
             $subscription       = $order->subscription;
 
             // status success
@@ -228,6 +236,14 @@ class FiuuController extends Controller
 
             // check data
             $order              = Order::find($data['orderid']);
+            Log::info('Fiuu payment check', [
+                'orderid_requested' => $data['orderid'] ?? null,
+                'order_found' => $order ? true : false,
+                'order_type' => $order->order_type ?? null,
+                'order_status' => $order->status ?? null,
+                'check_payment' => $checkPayment,
+                'payment_status_code' => $data['status'] ?? null,
+            ]);
             $payment            = $order->payment;
             $bag                = $order->bag;
             $order_booking      = $order->order_booking;
@@ -415,48 +431,61 @@ class FiuuController extends Controller
                 // order type subscription
                 else if ($order->order_type == Order::SUBSCRIPTION) {
 
-                    // get token
-                    $extra = json_decode($data['extraP'], true);
+                    // Activate the subscription as soon as THIS payment
+                    // succeeds — we're already inside the
+                    // `$data['status'] == '00'` (paid) branch at this
+                    // point, so the customer has genuinely paid.
+                    //
+                    // Previously all of this (activation, bag update,
+                    // qrcode issuance, activity log, email) was nested
+                    // inside `if ($token) { if ($data_rec accepted) {
+                    // ... } }` — gated entirely on Fiuu returning a
+                    // recurring-billing token in `extraP`. Not every
+                    // payment channel returns one the same way a saved
+                    // credit card does (e.g. TNG eWallet) — when it
+                    // didn't, this whole block silently never ran, and
+                    // the subscription stayed PENDING forever even
+                    // though the customer had already paid. The token
+                    // is now only used for the optional recurring-token
+                    // setup below, not to gate activation itself.
+                    $extra = json_decode($data['extraP'] ?? 'null', true) ?? [];
                     $token = $extra['token'] ?? null;
 
-                    // have token 
+                    // update subscription
+                    $subscription->status = Subscription::ACTIVE;
                     if ($token) {
+                        $subscription->cc_brand = $extra['ccbrand'] ?? null;
+                        $subscription->cc_last_four = $extra['cclast4'] ?? null;
+                        $subscription->cc_type = $extra['cctype'] ?? null;
+                    }
+                    $subscription->save();
 
-                        // local environment
-                        $by_pass = 1;                        
+                    // update bag
+                    if ($order->bag_subscription) {
+                        $bag = $order->bag_subscription;
+                        $bag->status_payment = Bag::PAID;
+                        $bag->save();
+                    }
+
+                    // Set up recurring billing for future auto-renewal —
+                    // optional: only happens if this payment channel
+                    // actually returned a token. If not, the subscription
+                    // is still active for its current cycle; it just
+                    // won't auto-renew via a saved token later (falls
+                    // back to whatever your renewal-reminder flow does).
+                    if ($token) {
+                        $by_pass = 1;
                         if (app()->environment('local') || $by_pass = 1) {
                             $data_rec = [
                                 [
                                     'status' => 'accepted',
                                 ]
                             ];
-                        }
-
-                        // server environment
-                        else {
-
-                            // process recurring
+                        } else {
                             $data_rec = $this->rms->getPaymentRequest($order, $token);
                         }
 
-                        // get return data
                         if ($data_rec && $data_rec[0]['status'] == 'accepted') {
-
-                            // update subscription
-                            $subscription->status = Subscription::ACTIVE;
-                            $subscription->cc_brand = $extra['ccbrand'] ?? null; 
-                            $subscription->cc_last_four = $extra['cclast4'] ?? null; 
-                            $subscription->cc_type = $extra['cctype'] ?? null; 
-                            $subscription->save();
-
-                            // update bag
-                            if ($order->bag_subscription) {
-                                $bag = $order->bag_subscription;
-                                $bag->status_payment = Bag::PAID;
-                                $bag->save();
-                            }
-
-                            // insert payment recurring
                             $recurring = PaymentRecurring::firstOrCreate(
                                 [
                                     'payment_id' => $payment->id, 
@@ -478,48 +507,48 @@ class FiuuController extends Controller
                                     'paid_at' => now()
                                 ]
                             );
-
-                            // auto insert qrcodes
-                            if ($order->quantity > 0) {
-                                for ($i = 0; $i < $order->quantity; $i++) {
-                                    $qr = new Qrcode();
-                                    $code = $qr->getNextSeriesNo();
-                                    Qrcode::create([
-                                        'series_no' => $code,
-                                        'user_id' => $order->user_id,
-                                        'status' => Qrcode::SCANNED,
-                                        'type' => Qrcode::AUTO,
-                                        'scan_at' => now(),
-                                        'scan_by' => $order->user_id,
-                                        'created_by'=> $order->user_id,
-                                    ]);
-                                }
-                            }
-
-                            // insert activity
-                            $activity = Activity::firstOrCreate(
-                                [
-                                    'order_id' => $order->id, 
-                                    'user_id' => $order->user_id,
-                                    'transaction_id' => $transaction->id,
-                                    'user_type' => 'customer',
-                                    'title' => 'Subscription', 
-                                    'status' => Activity::ACTIVE
-                                ],
-                            );
-
-                            // send email subscription
-                            $user = $order->user;
-                            $subject = 'Auto Maid: Your subscription purchase is successful';
-                            $emailContent = (new PurchaseSubscriptionEmail($user->name, $subject, $order))->render();
-                            $onesignal = new OneSignalService();
-                            $onesignal->sendEmail(
-                                $user->email,
-                                $subject,
-                                $emailContent,
-                            );
                         }
                     }
+
+                    // auto insert qrcodes
+                    if ($order->quantity > 0) {
+                        for ($i = 0; $i < $order->quantity; $i++) {
+                            $qr = new Qrcode();
+                            $code = $qr->getNextSeriesNo();
+                            Qrcode::create([
+                                'series_no' => $code,
+                                'user_id' => $order->user_id,
+                                'status' => Qrcode::SCANNED,
+                                'type' => Qrcode::AUTO,
+                                'scan_at' => now(),
+                                'scan_by' => $order->user_id,
+                                'created_by'=> $order->user_id,
+                            ]);
+                        }
+                    }
+
+                    // insert activity
+                    $activity = Activity::firstOrCreate(
+                        [
+                            'order_id' => $order->id, 
+                            'user_id' => $order->user_id,
+                            'transaction_id' => $transaction->id,
+                            'user_type' => 'customer',
+                            'title' => 'Subscription', 
+                            'status' => Activity::ACTIVE
+                        ],
+                    );
+
+                    // send email subscription
+                    $user = $order->user;
+                    $subject = 'Auto Maid: Your subscription purchase is successful';
+                    $emailContent = (new PurchaseSubscriptionEmail($user->name, $subject, $order))->render();
+                    $onesignal = new OneSignalService();
+                    $onesignal->sendEmail(
+                        $user->email,
+                        $subject,
+                        $emailContent,
+                    );
                 }
 
                 // order type subscription update (update credit card)
@@ -584,6 +613,39 @@ class FiuuController extends Controller
                             }
                         }
                     }                   
+                }
+
+                // order type subscription upgrade — tops up an existing
+                // active subscription onto a higher tier rather than
+                // creating a new one. The target plan was captured on
+                // the order at checkout time (upgrade_to_plan_code)
+                // since this webhook only has the Order row to work
+                // from, not the original request.
+                else if ($order->order_type == Order::SUBSCRIPTION_UPGRADE) {
+
+                    $existing_subscription = $order->user->subscribe;
+                    if ($existing_subscription && $order->upgrade_to_plan_code) {
+
+                        // switch plan, and give a fresh quota under the
+                        // new (higher) tier for the remainder of this
+                        // billing cycle rather than carrying over usage
+                        // counted against the old, lower-quota plan.
+                        $existing_subscription->plan_code = $order->upgrade_to_plan_code;
+                        $existing_subscription->orders_used_current_cycle = 0;
+                        $existing_subscription->save();
+
+                        // insert activity
+                        $activity = Activity::firstOrCreate(
+                            [
+                                'order_id' => $order->id,
+                                'user_id' => $order->user_id,
+                                'transaction_id' => $transaction->id,
+                                'user_type' => 'customer',
+                                'title' => 'Subscription Upgrade',
+                                'status' => Activity::ACTIVE
+                            ],
+                        );
+                    }
                 }
 
                 // return success
@@ -644,6 +706,14 @@ class FiuuController extends Controller
 
             // check data
             $order              = Order::find($data['orderid']);
+            Log::info('Fiuu payment check', [
+                'orderid_requested' => $data['orderid'] ?? null,
+                'order_found' => $order ? true : false,
+                'order_type' => $order->order_type ?? null,
+                'order_status' => $order->status ?? null,
+                'check_payment' => $checkPayment,
+                'payment_status_code' => $data['status'] ?? null,
+            ]);
             $payment            = $order->payment;
             $bag                = $order->bag;
             $order_booking      = $order->order_booking;
@@ -831,48 +901,61 @@ class FiuuController extends Controller
                 // order type subscription
                 else if ($order->order_type == Order::SUBSCRIPTION) {
 
-                    // get token
-                    $extra = json_decode($data['extraP'], true);
+                    // Activate the subscription as soon as THIS payment
+                    // succeeds — we're already inside the
+                    // `$data['status'] == '00'` (paid) branch at this
+                    // point, so the customer has genuinely paid.
+                    //
+                    // Previously all of this (activation, bag update,
+                    // qrcode issuance, activity log, email) was nested
+                    // inside `if ($token) { if ($data_rec accepted) {
+                    // ... } }` — gated entirely on Fiuu returning a
+                    // recurring-billing token in `extraP`. Not every
+                    // payment channel returns one the same way a saved
+                    // credit card does (e.g. TNG eWallet) — when it
+                    // didn't, this whole block silently never ran, and
+                    // the subscription stayed PENDING forever even
+                    // though the customer had already paid. The token
+                    // is now only used for the optional recurring-token
+                    // setup below, not to gate activation itself.
+                    $extra = json_decode($data['extraP'] ?? 'null', true) ?? [];
                     $token = $extra['token'] ?? null;
 
-                    // have token 
+                    // update subscription
+                    $subscription->status = Subscription::ACTIVE;
                     if ($token) {
+                        $subscription->cc_brand = $extra['ccbrand'] ?? null;
+                        $subscription->cc_last_four = $extra['cclast4'] ?? null;
+                        $subscription->cc_type = $extra['cctype'] ?? null;
+                    }
+                    $subscription->save();
 
-                        // local environment
-                        $by_pass = 1;                        
+                    // update bag
+                    if ($order->bag_subscription) {
+                        $bag = $order->bag_subscription;
+                        $bag->status_payment = Bag::PAID;
+                        $bag->save();
+                    }
+
+                    // Set up recurring billing for future auto-renewal —
+                    // optional: only happens if this payment channel
+                    // actually returned a token. If not, the subscription
+                    // is still active for its current cycle; it just
+                    // won't auto-renew via a saved token later (falls
+                    // back to whatever your renewal-reminder flow does).
+                    if ($token) {
+                        $by_pass = 1;
                         if (app()->environment('local') || $by_pass = 1) {
                             $data_rec = [
                                 [
                                     'status' => 'accepted',
                                 ]
                             ];
-                        }
-
-                        // server environment
-                        else {
-
-                            // process recurring
+                        } else {
                             $data_rec = $this->rms->getPaymentRequest($order, $token);
                         }
 
-                        // get return data
                         if ($data_rec && $data_rec[0]['status'] == 'accepted') {
-
-                            // update subscription
-                            $subscription->status = Subscription::ACTIVE;
-                            $subscription->cc_brand = $extra['ccbrand'] ?? null; 
-                            $subscription->cc_last_four = $extra['cclast4'] ?? null; 
-                            $subscription->cc_type = $extra['cctype'] ?? null; 
-                            $subscription->save();
-
-                            // update bag
-                            if ($order->bag_subscription) {
-                                $bag = $order->bag_subscription;
-                                $bag->status_payment = Bag::PAID;
-                                $bag->save();
-                            }
-
-                            // insert payment recurring
                             $recurring = PaymentRecurring::firstOrCreate(
                                 [
                                     'payment_id' => $payment->id, 
@@ -894,48 +977,48 @@ class FiuuController extends Controller
                                     'paid_at' => now()
                                 ]
                             );
-
-                            // auto insert qrcodes
-                            if ($order->quantity > 0) {
-                                for ($i = 0; $i < $order->quantity; $i++) {
-                                    $qr = new Qrcode();
-                                    $code = $qr->getNextSeriesNo();
-                                    Qrcode::create([
-                                        'series_no' => $code,
-                                        'user_id' => $order->user_id,
-                                        'status' => Qrcode::SCANNED,
-                                        'type' => Qrcode::AUTO,
-                                        'scan_at' => now(),
-                                        'scan_by' => $order->user_id,
-                                        'created_by'=> $order->user_id,
-                                    ]);
-                                }
-                            }
-
-                            // insert activity
-                            $activity = Activity::firstOrCreate(
-                                [
-                                    'order_id' => $order->id, 
-                                    'user_id' => $order->user_id,
-                                    'transaction_id' => $transaction->id,
-                                    'user_type' => 'customer',
-                                    'title' => 'Subscription', 
-                                    'status' => Activity::ACTIVE
-                                ],
-                            );
-
-                            // send email subscription
-                            $user = $order->user;
-                            $subject = 'Auto Maid: Your subscription purchase is successful';
-                            $emailContent = (new PurchaseSubscriptionEmail($user->name, $subject, $order))->render();
-                            $onesignal = new OneSignalService();
-                            $onesignal->sendEmail(
-                                $user->email,
-                                $subject,
-                                $emailContent,
-                            );
                         }
                     }
+
+                    // auto insert qrcodes
+                    if ($order->quantity > 0) {
+                        for ($i = 0; $i < $order->quantity; $i++) {
+                            $qr = new Qrcode();
+                            $code = $qr->getNextSeriesNo();
+                            Qrcode::create([
+                                'series_no' => $code,
+                                'user_id' => $order->user_id,
+                                'status' => Qrcode::SCANNED,
+                                'type' => Qrcode::AUTO,
+                                'scan_at' => now(),
+                                'scan_by' => $order->user_id,
+                                'created_by'=> $order->user_id,
+                            ]);
+                        }
+                    }
+
+                    // insert activity
+                    $activity = Activity::firstOrCreate(
+                        [
+                            'order_id' => $order->id, 
+                            'user_id' => $order->user_id,
+                            'transaction_id' => $transaction->id,
+                            'user_type' => 'customer',
+                            'title' => 'Subscription', 
+                            'status' => Activity::ACTIVE
+                        ],
+                    );
+
+                    // send email subscription
+                    $user = $order->user;
+                    $subject = 'Auto Maid: Your subscription purchase is successful';
+                    $emailContent = (new PurchaseSubscriptionEmail($user->name, $subject, $order))->render();
+                    $onesignal = new OneSignalService();
+                    $onesignal->sendEmail(
+                        $user->email,
+                        $subject,
+                        $emailContent,
+                    );
                 }
 
                 // order type subscription update (update credit card)
@@ -1000,6 +1083,39 @@ class FiuuController extends Controller
                             }
                         }
                     }                   
+                }
+
+                // order type subscription upgrade — tops up an existing
+                // active subscription onto a higher tier rather than
+                // creating a new one. The target plan was captured on
+                // the order at checkout time (upgrade_to_plan_code)
+                // since this webhook only has the Order row to work
+                // from, not the original request.
+                else if ($order->order_type == Order::SUBSCRIPTION_UPGRADE) {
+
+                    $existing_subscription = $order->user->subscribe;
+                    if ($existing_subscription && $order->upgrade_to_plan_code) {
+
+                        // switch plan, and give a fresh quota under the
+                        // new (higher) tier for the remainder of this
+                        // billing cycle rather than carrying over usage
+                        // counted against the old, lower-quota plan.
+                        $existing_subscription->plan_code = $order->upgrade_to_plan_code;
+                        $existing_subscription->orders_used_current_cycle = 0;
+                        $existing_subscription->save();
+
+                        // insert activity
+                        $activity = Activity::firstOrCreate(
+                            [
+                                'order_id' => $order->id,
+                                'user_id' => $order->user_id,
+                                'transaction_id' => $transaction->id,
+                                'user_type' => 'customer',
+                                'title' => 'Subscription Upgrade',
+                                'status' => Activity::ACTIVE
+                            ],
+                        );
+                    }
                 }
             }
         }

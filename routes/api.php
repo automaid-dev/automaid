@@ -118,6 +118,8 @@ Route::middleware('auth:sanctum')->group( function () {
 		Route::post('/subscription/placeorder', [\App\Http\Controllers\Api\Customer\SubscriptionController::class, 'placeOrder']);
 		Route::post('/subscription/cancel', [\App\Http\Controllers\Api\Customer\SubscriptionController::class, 'cancelSubscription']);
 		Route::post('/subscription/update', [\App\Http\Controllers\Api\Customer\SubscriptionController::class, 'updateSubscription']);
+		Route::post('/subscription/upgrade', [\App\Http\Controllers\Api\Customer\SubscriptionController::class, 'upgrade']);
+		Route::post('/subscription/history', [\App\Http\Controllers\Api\Customer\SubscriptionController::class, 'history']);
 		
 		// assign qrcodes of purchased bag
 		Route::post('/qrcode/assign', [\App\Http\Controllers\Api\Customer\QrcodeController::class, 'assignQrcode']);

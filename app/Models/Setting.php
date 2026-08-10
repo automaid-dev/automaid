@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use OwenIt\Auditing\Contracts\Auditable;
 use Guava\Sqids\Facades\Sqids;
+use Illuminate\Support\Facades\Storage;
 
 class Setting extends Model implements Auditable
 {
@@ -14,6 +15,17 @@ class Setting extends Model implements Auditable
 
     protected $guarded = ['id'];
     protected $table = 'settings';
+    protected $appends = ['terms_conditions_url'];
+
+    /**
+     * Full URL for the admin-uploaded Terms & Conditions PDF — same
+     * pattern as User::getAvatarUrlAttribute(). Null if none uploaded yet.
+     * @return string|null
+     */
+    public function getTermsConditionsUrlAttribute()
+    {
+        return $this->terms_conditions ? Storage::disk('s3')->url($this->terms_conditions) : null;
+    }
 
     /**
      * [booted description]

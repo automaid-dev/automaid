@@ -87,6 +87,7 @@ class TransactionResource extends Resource
                         'pending' => 'primary',
                     })
             ])
+            ->defaultSort('id', 'desc')
             ->filters([
                 SelectFilter::make('type')
                     ->options([

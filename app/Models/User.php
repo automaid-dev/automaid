@@ -242,6 +242,20 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail, Aud
     }
 
     /**
+     * All of this user's bag purchases regardless of payment status —
+     * for the customer-facing "My Bags" list only (BagController::bagPurchased).
+     * Deliberately separate from bag_purchases() above, which stays
+     * paid-only since it's also used for booking-quota validation
+     * (BookingController::schedule, QrcodeController, etc.) — a pending
+     * purchase should be visible to the customer, but must not count as
+     * an available bag until it's actually paid.
+     */
+    public function all_bag_purchases()
+    {
+        return $this->hasMany('App\Models\Bag', 'user_id');
+    }
+
+    /**
      * [qrcodes description]
      * @return [type] [description]
      */

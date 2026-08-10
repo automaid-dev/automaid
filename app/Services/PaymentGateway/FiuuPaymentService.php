@@ -67,7 +67,46 @@ class FiuuPaymentService
     public function getPaymentUrl(array $data)
     {
         $rms = new Payment($this->merchantId, $this->verifyKey, $this->secretKey, $this->environment);
-        $paymentUrl = $rms->getPaymentUrl($data['orderid'], $data['amount'], $data['bill_name'], $data['bill_email'], $data['bill_mobile']);
+
+        // THE FIX: returnUrl/callbackurl were never being passed to Fiuu
+        // at all — every payment request left them null, so Fiuu had
+        // nothing to redirect/notify to for that specific transaction
+        // and fell back to whatever generic default (if any) is set in
+        // the merchant dashboard. That's why the customer saw Fiuu's own
+        // generic success page instead of landing back in the app, and
+        // why the notification webhook never fired — there was nothing
+        // wrong with the webhook handlers themselves, they were simply
+        // never being called.
+        //
+        // route() builds these from the named routes in routes/web.php,
+        // using APP_URL — make sure that's set to
+        // https://app.automaid.asia in .env, or these will still point
+        // at the wrong host.
+        //
+        // Only returnUrl and callbackurl are wired here — Fiuu's own
+        // terminology treats callbackurl as serving both "callback" and
+        // "notification" purposes (one URL, not two), which is what
+        // FiuuController::getNotification is for. cancelurl (redirect on
+        // an abandoned/cancelled payment) is left as Fiuu's own default
+        // since there's no dedicated cancel handler in this codebase yet.
+        // FiuuController::getCallback exists but isn't referenced
+        // anywhere else in the codebase either — it duplicates
+        // getNotification's logic almost exactly but was never actually
+        // wired to anything before this fix, so it's left unmapped
+        // rather than guessed into a slot (like cancelurl) it doesn't
+        // semantically belong in.
+        $paymentUrl = $rms->getPaymentUrl(
+            $data['orderid'],
+            $data['amount'],
+            $data['bill_name'],
+            $data['bill_email'],
+            $data['bill_mobile'],
+            $data['bill_desc'] ?? 'Fiuu Payment',
+            $data['channel'] ?? null,
+            $data['currency'] ?? 'MYR',
+            route('webhook.fiuu.return'),
+            route('webhook.fiuu.notification'),
+        );
         return $paymentUrl;
     }
 

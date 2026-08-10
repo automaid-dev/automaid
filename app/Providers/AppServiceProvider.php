@@ -67,8 +67,19 @@ class AppServiceProvider extends ServiceProvider
         Event::listen('App\Events\MerchantAdminCancelOrder', 'App\Listeners\MerchantAdminCancelOrder');
 
 
-        if (!app()->environment('local')) {
-            URL::forceScheme('https');
-        }
+        // Always force HTTPS for generated URLs (route(), url(), etc.) —
+        // this used to be conditional on `!app()->environment('local')`,
+        // which meant it silently did nothing if APP_ENV was ever left as
+        // 'local' on a live server (as it currently is here — see the
+        // 'local.ERROR' prefix in storage/logs/laravel.log). That's why
+        // the Fiuu payment return/notification URLs were generating as
+        // http:// instead of https://, which Android's WebView correctly
+        // refuses to load (net::ERR_CLEARTEXT_NOT_PERMITTED). Forcing
+        // this unconditionally removes the dependency on APP_ENV being
+        // set correctly — but APP_ENV should still be fixed to
+        // 'production' in .env regardless, since running a live server
+        // as 'local' also typically means APP_DEBUG is on, which can
+        // leak stack traces and sensitive data in error responses.
+        URL::forceScheme('https');
     }
 }

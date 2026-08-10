@@ -22,6 +22,7 @@ class Order extends Model implements Auditable
     const SUBSCRIPTION = 'subscription';
     const SUBSCRIPTION_RENEWAL = 'subscription_renewal';
     const SUBSCRIPTION_UPDATE = 'subscription_update';
+    const SUBSCRIPTION_UPGRADE = 'subscription_upgrade';
     const PURCHASE_BAG = 'purchase_bag';
     const BOOKING = 'booking';
 

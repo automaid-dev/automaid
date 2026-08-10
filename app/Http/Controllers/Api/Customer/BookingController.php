@@ -36,12 +36,17 @@ class BookingController extends Controller
      * @param  [type] $subscription [description]
      * @param  [type] $quantity     [description]
      * @param  [type] $price        [description]
+     * @param  bool   $has_quota    Whether the subscriber still has plan
+     *                              order-quota remaining this cycle (see
+     *                              Subscription::hasOrderQuotaRemaining()).
+     *                              Ignored (treated as true) for legacy
+     *                              callers that don't pass it.
      * @return [type]               [description]
      */
-    public function calculateWashPrice($subscription, $quantity, $price, $total_bag_free_wash)
+    public function calculateWashPrice($subscription, $quantity, $price, $total_bag_free_wash, $has_quota = true)
     {
         $total = 0;
-        if ($subscription) {
+        if ($subscription && $has_quota) {
             if ($quantity <= $total_bag_free_wash) {
                 $total = 0;
             }
@@ -57,26 +62,23 @@ class BookingController extends Controller
 
     /**
      * [calculateDeliveryRate description]
-     * @param  [type] $subscription [description]
      * @param  [type] $quantity     [description]
      * @param  [type] $price        [description]
      * @return [type]               [description]
+     *
+     * Delivery is ALWAYS charged in full, regardless of subscription —
+     * previously this granted free delivery for a subscriber's first
+     * bag too (mirroring the free-wash benefit), but the subscription
+     * benefit is wash-only. A subscriber's "free 1st bag" now means the
+     * wash fee is waived; delivery for that same bag is billed at the
+     * normal per-bag delivery_price from Settings, same as any
+     * non-subscriber. The $subscription/$total_bag_free_delivery/
+     * $has_quota parameters are kept (unused) so every existing call
+     * site keeps working without needing to be touched.
      */
-    public function calculateDeliveryRate($subscription, $quantity, $price, $total_bag_free_delivery)
+    public function calculateDeliveryRate($subscription, $quantity, $price, $total_bag_free_delivery, $has_quota = true)
     {
-        $total = 0;
-        if ($subscription) {
-            if ($quantity <= $total_bag_free_delivery) {
-                $total = 0;
-            }
-            else {
-                $total = $price * ($quantity - $total_bag_free_delivery);
-            }
-        }
-        else {
-            $total = $price * $quantity;
-        }
-        return $total;
+        return $price * $quantity;
     }
 
     /**
@@ -112,12 +114,15 @@ class BookingController extends Controller
             $setting = Setting::find(1);
 
             // check if user have subscription
-            $is_subscribe = $user->subscribe ? 1 : 0;
+            $subscription = $user->subscribe;
+            $is_subscribe = $subscription ? 1 : 0;
+            $has_quota = $subscription ? $subscription->hasOrderQuotaRemaining($setting) : true;
 
             // get wash price
-            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash);
+            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
 
-            // get delivery charge
+            // get delivery charge — always full price regardless of
+            // subscription; the free-1st-bag benefit is wash-only.
             $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
 
             return response()->json([
@@ -349,7 +354,7 @@ class BookingController extends Controller
                 'pickup_end_time' => 'required', 
                 'delivery_charge' => 'required',   
                 'washing_charge' => 'required',
-                'qrcodes' => 'required|string',   
+                'qrcodes' => 'required',   
             ], [
                 'qrcodes.required' => 'Please select at least one QR code.',
             ]);
@@ -447,11 +452,15 @@ class BookingController extends Controller
 
             // check if user have subscription
             // -------------------------------
-            $is_subscribe = $user->subscribe ? 1 : 0;
+            $subscription = $user->subscribe;
+            $is_subscribe = $subscription ? 1 : 0;
+            $has_quota = $subscription ? $subscription->hasOrderQuotaRemaining($setting) : true;
 
-            // get charge
-            $delivery_charge = $request->delivery_charge ?? 0;
-            $washing_charge = $request->washing_charge ?? 0;
+            // get charge — recomputed server-side, never trusted from
+            // the client (a client-sent washing_charge/delivery_charge
+            // here previously went straight into the order unchecked).
+            $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
+            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
             $tax_charge = $request->tax ?? 0;
             $addon_charge = $request->addon_charge ?? 0;
             $discount = $request->discount ?? 0;
@@ -566,7 +575,15 @@ class BookingController extends Controller
             // insert qrcode users
             // -------------------
             if (isset($request->qrcodes)) {
-                $qrcodes = json_decode($request->qrcodes, true);
+                // Accept either a JSON-encoded string (the documented
+                // contract per the validation rule below) or a raw array
+                // (some clients send this instead) — avoids a hard
+                // TypeError from json_decode() when a client sends an
+                // array directly rather than a JSON string of one.
+                $qrcodes = is_array($request->qrcodes)
+                    ? $request->qrcodes
+                    : json_decode($request->qrcodes, true);
+                $qrcodes = $qrcodes ?? [];
 
                 if (count($qrcodes) > 0) {
                     foreach ($qrcodes as $code) {
@@ -686,6 +703,18 @@ class BookingController extends Controller
                 // update order
                 $order->booking_id = $booking->id;
                 $order->save();
+
+                // count this booking against the subscription's plan order
+                // quota for this cycle (bronze/silver cap; platinum &
+                // legacy no-plan subscriptions are unlimited, but we still
+                // track usage on them for visibility in the admin panel).
+                // Without this, hasOrderQuotaRemaining() always returns
+                // true and every order gets the free-wash benefit
+                // regardless of the plan's actual order limit.
+                if ($is_subscribe && $subscription) {
+                    $subscription->orders_used_current_cycle = $subscription->orders_used_current_cycle + 1;
+                    $subscription->save();
+                }
 
                 // insert order status
                 // 01 - Waiting rider for pickup

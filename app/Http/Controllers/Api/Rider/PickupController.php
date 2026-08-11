@@ -134,6 +134,21 @@ class PickupController extends Controller
                 'created_by' => $user->id,
             ]);
 
+            // optional photo + remark for this handoff step — the flow
+            // spec asks for a photo at pickup ("item pickuped") and
+            // delivery to outlet; this action covers both in one tap
+            // (matches how the rest of this flow is already built —
+            // there's no separate "arrived at outlet" confirmation).
+            if ($request->hasFile('image') || $request->filled('remark')) {
+                \App\Models\OrderStepPhoto::create([
+                    'order_id' => $order->id,
+                    'code' => OrderStatus::RIDER_DELIVERY_TO_WASH_OUTLET,
+                    'image_path' => $request->hasFile('image') ? $request->file('image')->store('order_steps', 's3') : null,
+                    'remark' => $request->remark,
+                    'created_by' => $user->id,
+                ]);
+            }
+
             // insert order status
             // 13 - delivery to wash outlet
             $code = OrderStatus::RIDER_DELIVERY_TO_WASH_OUTLET;

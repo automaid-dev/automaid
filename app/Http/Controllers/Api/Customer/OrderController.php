@@ -56,6 +56,7 @@ class OrderController extends Controller
                 'delivered', 
                 'customer_order_statuses',
                 'qrcode_users.qrcode',
+                'step_photos',
             ]);
             $data['order'] = $order;
             return response()->json([

@@ -114,6 +114,17 @@ class PickupOutletController extends Controller
                 'created_by' => $user->id,
             ]);
 
+            // optional photo + remark — "Delivering to customer"
+            if ($request->hasFile('image') || $request->filled('remark')) {
+                \App\Models\OrderStepPhoto::create([
+                    'order_id' => $order->id,
+                    'code' => OrderStatus::RIDER_PICKUP_FROM_WASH_OUTLET,
+                    'image_path' => $request->hasFile('image') ? $request->file('image')->store('order_steps', 's3') : null,
+                    'remark' => $request->remark,
+                    'created_by' => $user->id,
+                ]);
+            }
+
             // insert order status
             // 04 - Delivery to customer
             // 15 - Delivery to customer

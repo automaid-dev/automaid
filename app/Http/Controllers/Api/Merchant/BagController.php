@@ -122,6 +122,17 @@ class BagController extends Controller
                 'created_by' => $user->id,
             ]);
 
+            // optional photo + remark — "Wash in progress"
+            if ($request->hasFile('image') || $request->filled('remark')) {
+                \App\Models\OrderStepPhoto::create([
+                    'order_id' => $order->id,
+                    'code' => OrderStatus::MERCHANT_WASH_IN_PROGRESS,
+                    'image_path' => $request->hasFile('image') ? $request->file('image')->store('order_steps', 's3') : null,
+                    'remark' => $request->remark,
+                    'created_by' => $user->id,
+                ]);
+            }
+
             // insert order status
             // 03 - wash in progress
             // 23 - wash in progress

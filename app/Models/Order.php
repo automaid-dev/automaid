@@ -180,6 +180,17 @@ class Order extends Model implements Auditable
     {
         return $this->belongsTo(\App\Models\Booking::class);
     }
+
+    /**
+     * Photo + remark captured at each handoff step (rider pickup,
+     * merchant wash start/complete, rider pickup from outlet) — see
+     * OrderStepPhoto. Ordered oldest-first to match the status timeline.
+     * @return [type] [description]
+     */
+    public function step_photos()
+    {
+        return $this->hasMany(\App\Models\OrderStepPhoto::class, 'order_id')->orderBy('created_at');
+    }
     
     /**
      * [bag description]

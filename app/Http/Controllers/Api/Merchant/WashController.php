@@ -130,6 +130,17 @@ class WashController extends Controller
                 'created_by' => $user->id,
             ]);
 
+            // optional photo + remark — "Wash completed"
+            if ($request->hasFile('image') || $request->filled('remark')) {
+                \App\Models\OrderStepPhoto::create([
+                    'order_id' => $order->id,
+                    'code' => OrderStatus::MERCHANT_AWAITING_RIDER_T0_PICKUP,
+                    'image_path' => $request->hasFile('image') ? $request->file('image')->store('order_steps', 's3') : null,
+                    'remark' => $request->remark,
+                    'created_by' => $user->id,
+                ]);
+            }
+
             // insert order status
             // 24 - awaiting rider to pickup
             // 14 - pickup from wash outlet

@@ -197,10 +197,13 @@ class BookingController extends Controller
             }
 
             // check whether voucher already used
+            /*
             $exist = Voucher::whereHas('voucher_users', function ($query) {
                 $query->where('user_id', auth()->user()->id);
             })
             ->exists();
+            **/
+            $exist = $voucher->voucher_users()->where('user_id', $user->id)->exists();
             if ($exist) {
                 return response()->json([
                     'status' => false,
@@ -593,6 +596,37 @@ class BookingController extends Controller
                 );                
             }
 
+            // -------------------
+            // Insert QR code users
+            // -------------------
+            if ($request->filled('qrcodes')) {
+                $qrcodes = $request->qrcodes;
+
+                // Safely parse JSON strings while ignoring raw arrays or invalid types
+                if (is_string($qrcodes)) {
+                    $qrcodes = json_decode($qrcodes, true) ?? [];
+                }
+
+                if (is_array($qrcodes) && !empty($qrcodes)) {
+                    // Fetch all QR code IDs in 1 query instead of querying inside the loop (fixes N+1)
+                    $qrRecords = Qrcode::whereIn('series_no', $qrcodes)->pluck('id', 'series_no');
+
+                    foreach ($qrcodes as $code) {
+                        if (isset($qrRecords[$code])) {
+                            QrcodeUser::updateOrCreate(
+                                [
+                                    'order_id'  => $order->id, 
+                                    'qrcode_id' => $qrRecords[$code], 
+                                ],
+                                [
+                                    'created_by' => auth()->id()
+                                ]
+                            );
+                        }
+                    }
+                }
+            }
+            /*
             // insert qrcode users
             // -------------------
             if (isset($request->qrcodes)) {
@@ -626,6 +660,7 @@ class BookingController extends Controller
                     }
                 }
             }
+            
 
             // insert order addons
             // -------------------
@@ -654,6 +689,41 @@ class BookingController extends Controller
                     }
                 }
             }
+            **/
+
+            // insert order addons
+            // -------------------
+            if ($request->filled('addons')) {
+                $addons = $request->addons;
+
+                // Safely parse if string, keep if already an array
+                if (is_string($addons)) {
+                    $addons = json_decode($addons, true) ?? [];
+                }
+
+                if (is_array($addons) && count($addons) > 0) {
+                    foreach ($addons as $id) {
+                        // get addon detail
+                        $addon = AddOn::find($id);
+
+                        // insert addons
+                        if ($addon) {
+                            OrderAddon::updateOrCreate(
+                                [
+                                    'order_id' => $order->id, 
+                                    'user_id'  => $order->user_id, 
+                                    'addon_id' => $id,
+                                ],
+                                [ 
+                                    'status' => OrderAddon::ACTIVE, 
+                                    'amount' => $addon->price
+                                ]
+                            ); 
+                        }
+                    }
+                }
+            }
+
 
             // insert payment
             $data_payment = [

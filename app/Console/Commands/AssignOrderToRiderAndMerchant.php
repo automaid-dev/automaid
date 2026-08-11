@@ -10,7 +10,9 @@ use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\OrderStatus;
 use App\Models\Rider;
+use App\Models\Setting;
 use App\Models\User;
+use App\Services\OneSignalService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -639,6 +641,8 @@ class AssignOrderToRiderAndMerchant extends Command
                     // set to admin pending assign
                     $order->is_pending_assign = true;
                     $order->save();
+
+                    $this->notifyAdminPendingAssign($order, 'No active rider or merchant was found nearby.');
                 }
 
                 // trigger 2nd cronjob onwards)
@@ -667,6 +671,8 @@ class AssignOrderToRiderAndMerchant extends Command
                                     $order->is_pending_assign = true;
                                     $order->save();
 
+                                    $this->notifyAdminPendingAssign($order, 'The nearest riders/merchants queue was exhausted without anyone accepting.');
+
                                     // remove last queue from home
                                     AssignJob::where([
                                         'order_id' => $order->id
@@ -686,6 +692,44 @@ class AssignOrderToRiderAndMerchant extends Command
                 }
 
             }
+        }
+    }
+
+    /**
+     * Emails the admin (Settings > Admin Email) when an order needs
+     * manual rider/merchant assignment — covers the "system needs to
+     * send email notification to admin" requirement. WhatsApp
+     * notification isn't included here — that needs WhatsApp Business
+     * API credentials this codebase doesn't currently have configured;
+     * email is the reliable channel available right now.
+     *
+     * @param  \App\Models\Order $order
+     * @param  string $reason
+     * @return void
+     */
+    protected function notifyAdminPendingAssign(Order $order, string $reason): void
+    {
+        try {
+            $setting = Setting::find(1);
+            $adminEmail = $setting->admin_email ?? null;
+            if (!$adminEmail) {
+                return;
+            }
+
+            $subject = 'Auto Maid: Order #' . $order->id . ' needs manual assignment';
+            $body = sprintf(
+                '<p>Order #%s (%s) could not be auto-assigned to a rider/merchant.</p><p>Reason: %s</p><p>Please assign manually from the admin panel: Orders &gt; %s.</p>',
+                $order->id,
+                $order->series_no ?? '',
+                $reason,
+                $order->id
+            );
+
+            (new OneSignalService())->sendEmail($adminEmail, $subject, $body);
+        } catch (\Throwable $th) {
+            // Deliberately swallow — a failed admin notification email
+            // must never block the assignment cron from continuing to
+            // process the rest of the queue.
         }
     }
 }

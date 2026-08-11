@@ -79,13 +79,16 @@ class EditSubscription extends EditRecord
                         $record->updated_by = $user->id;
                         $record->save();
 
-                        // Send cancel email
+                        // Send cancel email + in-app notification + push
                         $subject = 'Auto Maid: Your subscription has been cancelled';
                         $emailContent = (new \App\Mail\CancelSubscriptionEmail($user->name, $subject))->render();
-                        (new \App\Services\OneSignalService())->sendEmail(
-                            $user->email,
+                        (new \App\Services\OneSignalService())->notifyUser(
+                            $user,
+                            \App\Models\Notification::SUBSCRIPTION_CANCELLED,
                             $subject,
+                            'Your subscription has been cancelled.',
                             $emailContent,
+                            $record->order_id,
                         );
                         Notification::make()
                             ->title('Subscription cancelled successfully.')

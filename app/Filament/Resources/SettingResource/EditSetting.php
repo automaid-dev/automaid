@@ -17,6 +17,7 @@ use Filament\Forms\Components\Split;
 use Filament\Forms\Components\Tabs;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\TimePicker;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\View;
 use Filament\Forms\Form;
@@ -133,6 +134,15 @@ class EditSetting extends EditRecord
                                                             ->placeholder('e.g., 2')
                                                             ->numeric()
                                                             ->helperText('per Order'),
+                                                        TextInput::make('sst_percent')
+                                                            ->label('SST (%)')
+                                                            ->placeholder('e.g., 8')
+                                                            ->numeric()
+                                                            ->helperText('Applied to washing + delivery charges on every booking'),
+                                                        TimePicker::make('same_day_cutoff_time')
+                                                            ->label('Same-Day Delivery Cutoff Time')
+                                                            ->seconds(false)
+                                                            ->helperText('Bookings for today must start before this time'),
                                                     ]),
                                             ]),
 

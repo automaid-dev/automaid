@@ -313,15 +313,18 @@ class FiuuController extends Controller
                         ],
                     );
 
-                    // send email purchase bag
+                    // send email + in-app notification + push (purchase bag)
                     $user = $order->user;
                     $subject = 'Auto Maid: Invoice for your purchase';
                     $emailContent = (new PurchaseBagEmail($user->name, $subject, $order))->render();
                     $onesignal = new OneSignalService();
-                    $onesignal->sendEmail(
-                        $user->email,
+                    $onesignal->notifyUser(
+                        $user,
+                        \App\Models\Notification::BAG_PURCHASED,
                         $subject,
+                        'Your bag purchase is confirmed — thanks for using Auto Maid.',
                         $emailContent,
+                        $order->id,
                     );
                 }
 
@@ -414,14 +417,17 @@ class FiuuController extends Controller
                     $booking = $order->booking;
                     $user = $order->user;
 
-                    // send email booking                
+                    // send email + in-app notification + push (new booking)
                     $subject = 'Auto Maid: Invoice for your order';
                     $emailContent = (new NewOrderEmail($user->name, $subject, $order))->render();
                     $onesignal = new OneSignalService();
-                    $onesignal->sendEmail(
-                        $user->email,
+                    $onesignal->notifyUser(
+                        $user,
+                        \App\Models\Notification::NEW_BOOKING,
                         $subject,
+                        'Your booking is confirmed — we\'ll keep you posted.',
                         $emailContent,
+                        $order->id,
                     );
 
                     // assign order to rider & merchant
@@ -539,15 +545,18 @@ class FiuuController extends Controller
                         ],
                     );
 
-                    // send email subscription
+                    // send email + in-app notification + push (subscription created)
                     $user = $order->user;
                     $subject = 'Auto Maid: Your subscription purchase is successful';
                     $emailContent = (new PurchaseSubscriptionEmail($user->name, $subject, $order))->render();
                     $onesignal = new OneSignalService();
-                    $onesignal->sendEmail(
-                        $user->email,
+                    $onesignal->notifyUser(
+                        $user,
+                        \App\Models\Notification::SUBSCRIPTION_CREATED,
                         $subject,
+                        'Your subscription is now active.',
                         $emailContent,
+                        $order->id,
                     );
                 }
 
@@ -783,15 +792,18 @@ class FiuuController extends Controller
                         ],
                     );
 
-                    // send email purchase bag
+                    // send email + in-app notification + push (purchase bag)
                     $user = $order->user;
                     $subject = 'Auto Maid: Invoice for your purchase';
                     $emailContent = (new PurchaseBagEmail($user->name, $subject, $order))->render();
                     $onesignal = new OneSignalService();
-                    $onesignal->sendEmail(
-                        $user->email,
+                    $onesignal->notifyUser(
+                        $user,
+                        \App\Models\Notification::BAG_PURCHASED,
                         $subject,
+                        'Your bag purchase is confirmed — thanks for using Auto Maid.',
                         $emailContent,
+                        $order->id,
                     );
                 }
 
@@ -884,14 +896,17 @@ class FiuuController extends Controller
                     $booking = $order->booking;
                     $user = $order->user;
 
-                    // send email booking                
+                    // send email + in-app notification + push (new booking)
                     $subject = 'Auto Maid: Invoice for your order';
                     $emailContent = (new NewOrderEmail($user->name, $subject, $order))->render();
                     $onesignal = new OneSignalService();
-                    $onesignal->sendEmail(
-                        $user->email,
+                    $onesignal->notifyUser(
+                        $user,
+                        \App\Models\Notification::NEW_BOOKING,
                         $subject,
+                        'Your booking is confirmed — we\'ll keep you posted.',
                         $emailContent,
+                        $order->id,
                     );
 
                     // assign order to rider & merchant
@@ -1009,15 +1024,18 @@ class FiuuController extends Controller
                         ],
                     );
 
-                    // send email subscription
+                    // send email + in-app notification + push (subscription created)
                     $user = $order->user;
                     $subject = 'Auto Maid: Your subscription purchase is successful';
                     $emailContent = (new PurchaseSubscriptionEmail($user->name, $subject, $order))->render();
                     $onesignal = new OneSignalService();
-                    $onesignal->sendEmail(
-                        $user->email,
+                    $onesignal->notifyUser(
+                        $user,
+                        \App\Models\Notification::SUBSCRIPTION_CREATED,
                         $subject,
+                        'Your subscription is now active.',
                         $emailContent,
+                        $order->id,
                     );
                 }
 

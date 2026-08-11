@@ -591,14 +591,17 @@ class SubscriptionController extends Controller
             $subscription->updated_by = $user->id;
             $subscription->save();
 
-            // send email cancel subscription
+            // send email + in-app notification + push (subscription cancelled)
             $subject = 'Auto Maid: Your subscription has been cancelled';
             $emailContent = (new CancelSubscriptionEmail($user->name, $subject))->render();
             $onesignal = new OneSignalService();
-            $onesignal->sendEmail(
-                $user->email,
+            $onesignal->notifyUser(
+                $user,
+                \App\Models\Notification::SUBSCRIPTION_CANCELLED,
                 $subject,
+                'Your subscription has been cancelled.',
                 $emailContent,
+                $subscription->order_id,
             );
 
             // return data cancel subscription

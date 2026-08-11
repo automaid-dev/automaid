@@ -90,7 +90,54 @@ class OneSignalService
         return $response->json();
     }
 
+    /**
+     * Central place for "notify this one user about this one thing" —
+     * creates the in-app Notification record (always, regardless of
+     * whether email/push succeed), sends the email, and attempts a push
+     * notification ONLY if the user has a real device_id registered.
+     *
+     * IMPORTANT: sendOneSignalNotification() broadcasts to ALL users
+     * when $playerId is null/empty (see included_segments => ['All']
+     * above) — this method deliberately never calls it without a
+     * confirmed non-empty device_id, to avoid ever accidentally
+     * notifying every single user about one person's booking/purchase/etc.
+     *
+     * @param  \App\Models\User $user
+     * @param  string $type      One of Notification::* constants
+     * @param  string $title
+     * @param  string $body
+     * @param  string $emailContent  Rendered HTML for the email body
+     * @param  int|null $orderId
+     * @return void
+     */
+    public function notifyUser($user, string $type, string $title, string $body, string $emailContent, ?int $orderId = null)
+    {
+        try {
+            \App\Models\Notification::create([
+                'user_id' => $user->id,
+                'type' => $type,
+                'title' => $title,
+                'body' => $body,
+                'order_id' => $orderId,
+            ]);
+        } catch (\Throwable $th) {
+            Log::error('Failed to create in-app notification', ['error' => $th->getMessage(), 'user_id' => $user->id, 'type' => $type]);
+        }
 
+        try {
+            $this->sendEmail($user->email, $title, $emailContent);
+        } catch (\Throwable $th) {
+            Log::error('Failed to send notification email', ['error' => $th->getMessage(), 'user_id' => $user->id, 'type' => $type]);
+        }
+
+        if (!empty($user->device_id)) {
+            try {
+                $this->sendOneSignalNotification($title, $body, $user->device_id);
+            } catch (\Throwable $th) {
+                Log::error('Failed to send push notification', ['error' => $th->getMessage(), 'user_id' => $user->id, 'type' => $type]);
+            }
+        }
+    }
 
 }
 

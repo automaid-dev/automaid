@@ -125,12 +125,21 @@ class BookingController extends Controller
             // subscription; the free-1st-bag benefit is wash-only.
             $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
 
+            // SST — admin-configurable (Settings > sst_percent), applied
+            // to washing + delivery here for the preview. schedule()
+            // recomputes this the same way server-side rather than
+            // trusting whatever the client sends back.
+            $sst_percent = $setting->sst_percent ?? 0;
+            $tax_charge = round(($washing_charge + $delivery_charge) * ($sst_percent / 100), 2);
+
             return response()->json([
                 'status' => true,
                 'message' => 'Successfully get delivery charge & washing charge.',
                 'data' => [
                     'delivery_change' => $delivery_charge, 
-                    'washing_charge' => $washing_charge
+                    'washing_charge' => $washing_charge,
+                    'sst_percent' => $sst_percent,
+                    'tax_charge' => $tax_charge,
                 ],
             ]);
 
@@ -418,15 +427,18 @@ class BookingController extends Controller
             // ------------------------------
             if (Carbon::parse($request->pickup_date)->format('Y-m-d') == Carbon::now()->format('Y-m-d')) {
 
-                // get booking time
-                $limit_time = Carbon::parse('10:00');
+                // get booking time — admin-configurable cutoff
+                // (Settings > Same Day Cutoff Time), previously
+                // hardcoded to 10:00 regardless of what admin set.
+                $cutoff = $setting->same_day_cutoff_time ?? '12:00:00';
+                $limit_time = Carbon::parse($cutoff);
                 $start_time = Carbon::parse($request->pickup_start_time);  
                 
-                // check if booking time more than 10 am
+                // check if booking time more than cutoff
                 if ($start_time->gt($limit_time)) { 
                     return response()->json([
                         'status' => false,
-                        'message' => 'Booking for today must before 10 am.',
+                        'message' => 'Booking for today must be before ' . $limit_time->format('g:i A') . '.',
                     ]);
                 }
             }
@@ -461,7 +473,6 @@ class BookingController extends Controller
             // here previously went straight into the order unchecked).
             $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
             $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
-            $tax_charge = $request->tax ?? 0;
             $addon_charge = $request->addon_charge ?? 0;
             $discount = $request->discount ?? 0;
 
@@ -485,6 +496,16 @@ class BookingController extends Controller
             if ($request->birthday_reward && $request->birthday_reward > 0) {                
                 $birthday_reward = $request->birthday_reward;
             }
+
+            // SST — recomputed server-side from the admin setting, never
+            // trusted from the client (previously `$request->tax ?? 0`
+            // went straight into the order unchecked, same class of gap
+            // fixed elsewhere for washing/delivery charges). Applied to
+            // washing + delivery, matching calculateRate()'s preview —
+            // adjust the base here if the business wants SST calculated
+            // on a different subtotal (e.g. including add-ons).
+            $sst_percent = $setting->sst_percent ?? 0;
+            $tax_charge = round(($washing_charge + $delivery_charge) * ($sst_percent / 100), 2);
 
             // get grand total
             // ---------------
@@ -749,15 +770,18 @@ class BookingController extends Controller
                     ],
                 );
 
-                // send email booking     
+                // send email + in-app notification + push (new booking)
                 $user = $order->user;           
                 $subject = 'Auto Maid: Invoice for your order';
                 $emailContent = (new \App\Mail\NewOrderEmail($user->name, $subject, $order))->render();
                 $onesignal = new \App\Services\OneSignalService();
-                $onesignal->sendEmail(
-                    $user->email,
+                $onesignal->notifyUser(
+                    $user,
+                    \App\Models\Notification::NEW_BOOKING,
                     $subject,
+                    'Your booking is confirmed — we\'ll keep you posted.',
                     $emailContent,
+                    $order->id,
                 );
 
                 // assign order to rider & merchant

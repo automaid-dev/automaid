@@ -416,7 +416,7 @@ class AuthController extends Controller
                 $onesignal = new OneSignalService();
                 $onesignal->notifyUser(
                     $user,
-                    \App\Models\Notification::ACCOUNT_CREATED,
+                    \App\Models\CustomerNotification::ACCOUNT_CREATED,
                     $subject,
                     'Welcome to Auto Maid! Your account is ready.',
                     $emailContent,

@@ -113,7 +113,7 @@ class OneSignalService
     public function notifyUser($user, string $type, string $title, string $body, string $emailContent, ?int $orderId = null)
     {
         try {
-            \App\Models\Notification::create([
+            \App\Models\CustomerNotification::create([
                 'user_id' => $user->id,
                 'type' => $type,
                 'title' => $title,

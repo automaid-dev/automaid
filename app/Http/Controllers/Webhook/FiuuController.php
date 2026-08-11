@@ -320,7 +320,7 @@ class FiuuController extends Controller
                     $onesignal = new OneSignalService();
                     $onesignal->notifyUser(
                         $user,
-                        \App\Models\Notification::BAG_PURCHASED,
+                        \App\Models\CustomerNotification::BAG_PURCHASED,
                         $subject,
                         'Your bag purchase is confirmed — thanks for using Auto Maid.',
                         $emailContent,
@@ -423,7 +423,7 @@ class FiuuController extends Controller
                     $onesignal = new OneSignalService();
                     $onesignal->notifyUser(
                         $user,
-                        \App\Models\Notification::NEW_BOOKING,
+                        \App\Models\CustomerNotification::NEW_BOOKING,
                         $subject,
                         'Your booking is confirmed — we\'ll keep you posted.',
                         $emailContent,
@@ -552,7 +552,7 @@ class FiuuController extends Controller
                     $onesignal = new OneSignalService();
                     $onesignal->notifyUser(
                         $user,
-                        \App\Models\Notification::SUBSCRIPTION_CREATED,
+                        \App\Models\CustomerNotification::SUBSCRIPTION_CREATED,
                         $subject,
                         'Your subscription is now active.',
                         $emailContent,
@@ -799,7 +799,7 @@ class FiuuController extends Controller
                     $onesignal = new OneSignalService();
                     $onesignal->notifyUser(
                         $user,
-                        \App\Models\Notification::BAG_PURCHASED,
+                        \App\Models\CustomerNotification::BAG_PURCHASED,
                         $subject,
                         'Your bag purchase is confirmed — thanks for using Auto Maid.',
                         $emailContent,
@@ -902,7 +902,7 @@ class FiuuController extends Controller
                     $onesignal = new OneSignalService();
                     $onesignal->notifyUser(
                         $user,
-                        \App\Models\Notification::NEW_BOOKING,
+                        \App\Models\CustomerNotification::NEW_BOOKING,
                         $subject,
                         'Your booking is confirmed — we\'ll keep you posted.',
                         $emailContent,
@@ -1031,7 +1031,7 @@ class FiuuController extends Controller
                     $onesignal = new OneSignalService();
                     $onesignal->notifyUser(
                         $user,
-                        \App\Models\Notification::SUBSCRIPTION_CREATED,
+                        \App\Models\CustomerNotification::SUBSCRIPTION_CREATED,
                         $subject,
                         'Your subscription is now active.',
                         $emailContent,

@@ -777,7 +777,7 @@ class BookingController extends Controller
                 $onesignal = new \App\Services\OneSignalService();
                 $onesignal->notifyUser(
                     $user,
-                    \App\Models\Notification::NEW_BOOKING,
+                    \App\Models\CustomerNotification::NEW_BOOKING,
                     $subject,
                     'Your booking is confirmed — we\'ll keep you posted.',
                     $emailContent,

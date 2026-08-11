@@ -597,7 +597,7 @@ class SubscriptionController extends Controller
             $onesignal = new OneSignalService();
             $onesignal->notifyUser(
                 $user,
-                \App\Models\Notification::SUBSCRIPTION_CANCELLED,
+                \App\Models\CustomerNotification::SUBSCRIPTION_CANCELLED,
                 $subject,
                 'Your subscription has been cancelled.',
                 $emailContent,

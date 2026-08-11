@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api\Customer;
 
 use App\Http\Controllers\Controller;
-use App\Models\Notification;
+use App\Models\CustomerNotification;
 use Illuminate\Http\Request;
 
 class NotificationController extends Controller
@@ -24,12 +24,12 @@ class NotificationController extends Controller
                 ]);
             }
 
-            $notifications = Notification::where('user_id', $user->id)
+            $notifications = CustomerNotification::where('user_id', $user->id)
                 ->orderByDesc('id')
                 ->limit(100)
                 ->get();
 
-            $unreadCount = Notification::where('user_id', $user->id)
+            $unreadCount = CustomerNotification::where('user_id', $user->id)
                 ->whereNull('read_at')
                 ->count();
 
@@ -67,7 +67,7 @@ class NotificationController extends Controller
                 ]);
             }
 
-            $query = Notification::where('user_id', $user->id)->whereNull('read_at');
+            $query = CustomerNotification::where('user_id', $user->id)->whereNull('read_at');
             if ($request->id) {
                 $query->where('id', $request->id);
             }

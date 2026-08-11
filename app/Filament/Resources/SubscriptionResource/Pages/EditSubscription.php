@@ -84,7 +84,7 @@ class EditSubscription extends EditRecord
                         $emailContent = (new \App\Mail\CancelSubscriptionEmail($user->name, $subject))->render();
                         (new \App\Services\OneSignalService())->notifyUser(
                             $user,
-                            \App\Models\Notification::SUBSCRIPTION_CANCELLED,
+                            \App\Models\CustomerNotification::SUBSCRIPTION_CANCELLED,
                             $subject,
                             'Your subscription has been cancelled.',
                             $emailContent,

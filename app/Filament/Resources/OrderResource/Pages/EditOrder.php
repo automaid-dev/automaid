@@ -571,6 +571,18 @@ class EditOrder extends EditRecord
                     'user_id' => $acceptedBy,
                     'order_id' => $this->record->id, 
                     'order_status_id' => $order_status->id,
+                ],
+                [
+                    // Both rider and merchant home dashboards require
+                    // is_queue=true for their own pending-acceptance code
+                    // (11 for rider, 21 for merchant) before a job shows
+                    // up at all — normally set by the auto-assignment
+                    // command's nearest-candidate queueing. A manually
+                    // assigned job never went through that, so without
+                    // this the job exists in the database but is
+                    // invisible in the rider/merchant app.
+                    'is_queue' => true,
+                    'is_accepted' => false,
                 ]
             );
         }

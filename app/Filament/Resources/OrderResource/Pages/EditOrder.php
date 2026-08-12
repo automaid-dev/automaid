@@ -194,14 +194,24 @@ class EditOrder extends EditRecord
                             'created_by' => auth()->user()->id,
                         ]
                     );
+                    // Leave this as a genuine pending job (is_accepted =
+                    // false, is_queue = true) — same as the auto-assign
+                    // flow — rather than marking it pre-accepted. Marking
+                    // it pre-accepted here used to skip the rider's own
+                    // acceptance step entirely, which meant the
+                    // "ready for pickup" follow-up job (normally created
+                    // when the rider taps Accept in their own app) never
+                    // got created either — so nothing ever showed up in
+                    // their dashboard at all. The rider now sees this as
+                    // a normal incoming job and accepts it themselves,
+                    // which correctly cascades to the next step.
                     $job = new AssignJob();
                     $job->code = OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE;
                     $job->user_id = $data['rider_id'];
                     $job->order_id = $this->record->id;
                     $job->order_status_id = $status->id;
-                    $job->is_accepted = true;
-                    $job->accepted_at = now();
-                    $job->accepted_by = $data['rider_id'];
+                    $job->is_queue = true;
+                    $job->is_accepted = false;
                     $job->save();
                 }
             }
@@ -242,14 +252,16 @@ class EditOrder extends EditRecord
                             'created_by' => auth()->user()->id,
                         ]
                     );
+                    // See the matching rider block above for why this is
+                    // left as a genuine pending job rather than marked
+                    // pre-accepted.
                     $job = new AssignJob();
                     $job->code = OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE;
                     $job->user_id = $data['merchant_id'];
                     $job->order_id = $this->record->id;
                     $job->order_status_id = $status->id;
-                    $job->is_accepted = true;
-                    $job->accepted_at = now();
-                    $job->accepted_by = $data['merchant_id'];
+                    $job->is_queue = true;
+                    $job->is_accepted = false;
                     $job->save();
                 }
             }
@@ -262,7 +274,39 @@ class EditOrder extends EditRecord
         }
 
         // update status admin
-        if (isset($data['admin_status'])) {
+        //
+        // IMPORTANT: `admin_status` is present in $data on every save,
+        // not just when it's actually changed — Filament submits the
+        // full form state regardless. This block used to run on every
+        // save unconditionally, wiping every order_status/assign_job/
+        // activity/etc and rebuilding from whatever the CURRENT (often
+        // unrelated-to-this-save) admin_status value pointed to — using
+        // $data['rider_id']/$data['merchant_id'], which are null unless
+        // the admin is ALSO picking a rider/merchant in that exact same
+        // save. That's why simply assigning a rider (with admin_status
+        // unchanged) would wipe the assignment right back out, and why
+        // trying again afterward kept failing — the same wipe fires on
+        // every subsequent save too.
+        //
+        // Fixed: only wipe-and-rebuild when admin_status genuinely
+        // changed, and fall back to the existing accepted rider/merchant
+        // when rebuilding so a save that doesn't touch the dropdowns
+        // never silently drops an assignment.
+        $statusActuallyChanged = isset($data['admin_status'])
+            && $data['admin_status'] !== $this->record->admin_status;
+
+        if ($statusActuallyChanged) {
+
+            $riderIdForRebuild = $data['rider_id']
+                ?? $this->record->rider?->accepted_by
+                ?? $this->record->rider_pending?->accepted_by
+                ?? null;
+            $merchantIdForRebuild = $data['merchant_id']
+                ?? $this->record->merchant?->accepted_by
+                ?? $this->record->merchant_pending?->accepted_by
+                ?? null;
+            $data['rider_id'] = $riderIdForRebuild;
+            $data['merchant_id'] = $merchantIdForRebuild;
 
             // remove all status
             $this->record->order_statuses()->delete();
@@ -934,13 +978,15 @@ class EditOrder extends EditRecord
                                         ->options(function () {
                                             return \App\Models\User::role('rider')
                                                 ->orderBy('name', 'asc')
-                                                ->pluck('name', 'id'); // Full list for search
+                                                ->get()
+                                                ->mapWithKeys(fn ($u) => [$u->id => "{$u->name} — {$u->email}"]); // name + email so admin can tell riders with the same name apart
                                         })
                                         ->preload(function () {
                                             return \App\Models\User::role('rider')
                                                 ->orderBy('name', 'asc')
                                                 ->limit(10)
-                                                ->pluck('name', 'id'); // Limit preload to 10
+                                                ->get()
+                                                ->mapWithKeys(fn ($u) => [$u->id => "{$u->name} — {$u->email}"]);
                                         }),
                                     Select::make('merchant_id')
                                         ->label('Merchant')                                            

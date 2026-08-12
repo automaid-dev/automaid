@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\ImageManager;
 use Seshac\Otp\Otp;
@@ -29,7 +30,7 @@ class RiderController extends Controller
     {
         try {
             $validateEmail = Validator::make($request->all(), [
-                'email' => 'required|string|email|max:255|unique:users',             
+                'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')],             
             ]);
             if ($validateEmail->fails()) {
                 return response()->json([
@@ -39,14 +40,20 @@ class RiderController extends Controller
                 ]);
             }
 
-            // check user
-            $user = User::where('email', $request->email)->first();
+            // check user — include soft-deleted rows too, since `email`
+            // has a hard unique DB constraint: only checking non-deleted
+            // rows here would let validation pass for a soft-deleted
+            // user's email, then crash on a duplicate-key error at the
+            // INSERT step below (same class of bug already fixed on the
+            // customer registration flow — this controller just never
+            // got the same fix).
+            $user = User::withTrashed()->where('email', $request->email)->first();
 
-            // new user
-            if (!$user) {            
+            // new user, or a previously soft-deleted account re-registering
+            if (!$user || $user->trashed()) {            
                 $validate = Validator::make($request->all(), [
                     'name' => 'required|string|max:255',
-                    'email' => 'required|string|email|max:255|unique:users',
+                    'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')->ignore($user?->id)],
                     'country_code_mobile' => 'required',
                     'mobile_no' => 'required|numeric|min:1',
                     'password' => 'required|string|min:8|confirmed',
@@ -90,28 +97,52 @@ class RiderController extends Controller
                     ]);
                 }
 
-                // insert user rider
-                $user = User::create([
-                    'name' => $request->name ?? null,
-                    'email' => $request->email ?? null,
-                    'country_code_mobile' => $request->country_code_mobile ?? null,
-                    'mobile_no' => $request->mobile_no ?? null,
-                    'password' => Hash::make($request->password),
-                    'icno' => $request->icno ?? null,                    
-                    'status' => User::PENDING,
-                    'is_active' => false,
-                    'email_verified_at' => now(),
+                // insert user rider — restore-and-reuse the row if this
+                // email belongs to a previously soft-deleted account,
+                // rather than always inserting a fresh row (which would
+                // crash on the hard unique constraint for `email`).
+                if ($user && $user->trashed()) {
+                    $user->restore();
+                    $user->name = $request->name ?? null;
+                    $user->country_code_mobile = $request->country_code_mobile ?? null;
+                    $user->mobile_no = $request->mobile_no ?? null;
+                    $user->password = Hash::make($request->password);
+                    $user->icno = $request->icno ?? null;
+                    $user->status = User::PENDING;
+                    $user->is_active = false;
+                    $user->email_verified_at = now();
+                    $user->address_line_1 = $request->address_line_1 ?? null;
+                    $user->address_line_2 = $request->address_line_2 ?? null;
+                    $user->country_id = $request->country_name ? get_country_id($request->country_name)['id'] : null;
+                    $user->state_id = $request->state_name ? get_state_id($request->state_name)['id'] : null;
+                    $user->postcode = $request->postcode ?? null;
+                    $user->city = $request->city ?? null;
+                    $user->latitude = $request->latitude ?? null;
+                    $user->longitude = $request->longitude ?? null;
+                    $user->save();
+                } else {
+                    $user = User::create([
+                        'name' => $request->name ?? null,
+                        'email' => $request->email ?? null,
+                        'country_code_mobile' => $request->country_code_mobile ?? null,
+                        'mobile_no' => $request->mobile_no ?? null,
+                        'password' => Hash::make($request->password),
+                        'icno' => $request->icno ?? null,                    
+                        'status' => User::PENDING,
+                        'is_active' => false,
+                        'email_verified_at' => now(),
 
-                    'address_line_1' => $request->address_line_1 ?? null,
-                    'address_line_2' => $request->address_line_2 ?? null,
-                    'country_id' => $request->country_name ? get_country_id($request->country_name)['id'] : null,
-                    'state_id' => $request->state_name ? get_state_id($request->state_name)['id'] : null,
-                    'postcode' => $request->postcode ?? null,
-                    'city' => $request->city ?? null,
-                    
-                    'latitude' => $request->latitude ?? null,
-                    'longitude' => $request->longitude ?? null,
-                ]);
+                        'address_line_1' => $request->address_line_1 ?? null,
+                        'address_line_2' => $request->address_line_2 ?? null,
+                        'country_id' => $request->country_name ? get_country_id($request->country_name)['id'] : null,
+                        'state_id' => $request->state_name ? get_state_id($request->state_name)['id'] : null,
+                        'postcode' => $request->postcode ?? null,
+                        'city' => $request->city ?? null,
+                        
+                        'latitude' => $request->latitude ?? null,
+                        'longitude' => $request->longitude ?? null,
+                    ]);
+                }
                 $user->assignRole('rider');
 
                 $ic_front = null;
@@ -139,8 +170,7 @@ class RiderController extends Controller
                     $jpj_grant = $this->uploadFile($request->jpj_grant);
                 }
 
-                $rider = new Rider();
-                $rider->user_id = $user->id;
+                $rider = Rider::firstOrNew(['user_id' => $user->id]);
                 $rider->type_rider = $request->type_rider ?? null;
                 $rider->type_vehicle = $request->type_vehicle ?? null;
                 $rider->emergency_name = $request->emergency_name ?? null;

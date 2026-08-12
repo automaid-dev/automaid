@@ -34,10 +34,19 @@ class CheckNextPaymentSubscription extends Command
     public function handle()
     {
         // get payment recurring
+        //
+        // IMPORTANT FIX: this used to compare `next_payment_date >= today`,
+        // which is backwards for a "find renewals that are due" query — it
+        // excluded anything already overdue, and once a subscription's
+        // next_payment_date slipped into the past (e.g. one missed cron
+        // run, or a gateway hiccup), it could never match this condition
+        // again, permanently locking that subscription out of renewal
+        // forever even though `status` stays 'active' in the database.
+        // Renewal should trigger once the due date has arrived OR passed.
         $recurrings = PaymentRecurring::whereHas('subscription', function($query) {
             $query->where(['status' => Subscription::ACTIVE]);
         })
-        ->whereDate('next_payment_date', '>=', Carbon::today())
+        ->whereDate('next_payment_date', '<=', Carbon::today())
         ->whereNotNull('paid_at')
         ->where([
             'is_paid' => true, 

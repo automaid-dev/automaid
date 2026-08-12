@@ -260,6 +260,15 @@ class AssignOrderToRiderAndMerchant extends Command
                                             ->active()
                                             ->get();
 
+                                        // Track how many candidates were actually
+                                        // found — this was previously never set
+                                        // anywhere in this file (stuck at its
+                                        // initial 0), which made the "no riders
+                                        // found" branch further down fire on every
+                                        // first attempt regardless of whether
+                                        // riders genuinely existed nearby.
+                                        $total_riders = count($users);
+
                                         // found assigned riders
                                         if (count($users) > 0) {
 
@@ -497,6 +506,10 @@ class AssignOrderToRiderAndMerchant extends Command
                                             ->active()
                                             ->get();
 
+                                        // See the matching comment in the rider
+                                        // block above — same fix.
+                                        $total_merchants = count($users);
+
                                         // found nearby merchants
                                         if (count($users) > 0) {
 
@@ -630,8 +643,23 @@ class AssignOrderToRiderAndMerchant extends Command
                         }
                         
                         // save is_check_queue (indicator already check the first time)
-                        $status->is_check_queue = true;
-                        $status->save();
+                        //
+                        // Previously set unconditionally — combined with
+                        // total_riders/total_merchants never actually being
+                        // populated (see the fix above), this meant an order
+                        // that failed to find any candidate on its very first
+                        // cron tick (e.g. no rider on duty yet) was locked out
+                        // of ever being retried, even after a rider came
+                        // online moments later. Now only locks in once a
+                        // candidate was genuinely found for this status's
+                        // role — otherwise it retries on the next tick.
+                        $foundCandidateForThisStatus =
+                            ($status->code == OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE && $total_riders > 0)
+                            || ($status->code == OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE && $total_merchants > 0);
+                        if ($foundCandidateForThisStatus) {
+                            $status->is_check_queue = true;
+                            $status->save();
+                        }
                     }
                 }
 

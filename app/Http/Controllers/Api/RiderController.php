@@ -108,6 +108,11 @@ class RiderController extends Controller
                     $user->mobile_no = $request->mobile_no ?? null;
                     $user->password = Hash::make($request->password);
                     $user->icno = $request->icno ?? null;
+                    $user->id_type = match (strtoupper((string) $request->id_type)) {
+                        'NRIC' => 1,
+                        'PASSPORT' => 2,
+                        default => null,
+                    };
                     $user->status = User::PENDING;
                     $user->is_active = false;
                     $user->email_verified_at = now();
@@ -127,7 +132,12 @@ class RiderController extends Controller
                         'country_code_mobile' => $request->country_code_mobile ?? null,
                         'mobile_no' => $request->mobile_no ?? null,
                         'password' => Hash::make($request->password),
-                        'icno' => $request->icno ?? null,                    
+                        'icno' => $request->icno ?? null,
+                        'id_type' => match (strtoupper((string) $request->id_type)) {
+                            'NRIC' => 1,
+                            'PASSPORT' => 2,
+                            default => null,
+                        },
                         'status' => User::PENDING,
                         'is_active' => false,
                         'email_verified_at' => now(),

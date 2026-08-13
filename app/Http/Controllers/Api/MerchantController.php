@@ -122,6 +122,20 @@ class MerchantController extends Controller
                 // email belongs to a previously soft-deleted account,
                 // rather than always inserting a fresh row (which would
                 // crash on the hard unique constraint for `email`).
+                //
+                // users.id_type is an unsignedInteger column (1=NRIC,
+                // 2=Passport per its migration comment) — the app sends
+                // the human-readable label ('NRIC'/'Passport') for a
+                // nicer dropdown UX, so it needs converting here before
+                // it can be stored. Sending the raw string straight
+                // through crashed with "Incorrect integer value: 'NRIC'
+                // for column 'id_type'".
+                $idTypeCode = match (strtoupper((string) $request->id_type)) {
+                    'NRIC' => 1,
+                    'PASSPORT' => 2,
+                    default => null,
+                };
+
                 if ($user && $user->trashed()) {
                     $user->restore();
                     $user->name = $request->name ?? null;
@@ -129,7 +143,7 @@ class MerchantController extends Controller
                     $user->mobile_no = $request->mobile_no ?? null;
                     $user->password = Hash::make($request->password);
                     $user->icno = $request->icno ?? null;
-                    $user->id_type = $request->id_type ?? null;
+                    $user->id_type = $idTypeCode;
                     $user->status = User::PENDING;
                     $user->is_active = false;
                     $user->email_verified_at = now();
@@ -150,7 +164,7 @@ class MerchantController extends Controller
                         'mobile_no' => $request->mobile_no ?? null,
                         'password' => Hash::make($request->password),
                         'icno' => $request->icno ?? null,
-                        'id_type' => $request->id_type ?? null,
+                        'id_type' => $idTypeCode,
                         'status' => User::PENDING,
                         'is_active' => false,
                         'email_verified_at' => now(),

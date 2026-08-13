@@ -100,7 +100,8 @@ class CheckNextPaymentSubscription extends Command
                             );
 
                             // insert payment recurring
-                            $next = Carbon::now()->addDay(); // Carbon::now()->addMonth()->toDateString()
+                            // Confirmed with client: monthly cycle.
+                            $next = Carbon::now()->addMonth();
                             $new_recurring = PaymentRecurring::firstOrCreate(
                                 [
                                     'payment_id' => $recurring->payment_id,

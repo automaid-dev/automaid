@@ -143,13 +143,15 @@ class SubscriptionController extends Controller
             );
 
             // insert subscription
+            // Confirmed with client: real monthly billing cycle, not the
+            // 1-day period a previous developer left in for quick
+            // testing of the recurring-renewal flow.
             $start = Carbon::now();
-            $end = Carbon::now()->addDay();
+            $end = Carbon::now()->addMonth();
             $subscription = Subscription::firstOrCreate(
                 ['order_id' => $order->id, 'user_id' => $user->id, 'payment_id' => $payment->id],
                 [
                     'start_date' => $start,
-                    // 'end_date' => Carbon::now()->addMonth()->format('Y-m-d-'),
                     'end_date' => $end,
                     'start_at' => $start,
                     'renew_at' => $end,

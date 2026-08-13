@@ -16,15 +16,20 @@ class RegisterEmail extends Mailable implements ShouldQueue
     public $name;
     public $email;
     public $subject;
+    public $body;
 
     /**
      * Create a new message instance.
+     *
+     * @param string|null $body Rendered HTML body — if omitted, falls back
+     *                          to the original hardcoded welcome wording.
      */
-    public function __construct(string $name, string $email, string $subject)
+    public function __construct(string $name, string $email, string $subject, ?string $body = null)
     {
         $this->name = $name;
         $this->email = $email;
         $this->subject = $subject;
+        $this->body = $body ?? "<p>Dear <strong>{$name}</strong>,</p><p>Welcome to Auto Maid! Your account is ready.</p>";
     }
 
     /**
@@ -43,10 +48,10 @@ class RegisterEmail extends Mailable implements ShouldQueue
     public function content(): Content
     {
         return new Content(
-            view: 'emails.register',
+            view: 'emails.custom',
             with: [
-                'name' => $this->name,
-                'email' => $this->email,
+                'subject' => $this->subject,
+                'body' => $this->body,
             ],
         );
     }

@@ -197,12 +197,17 @@ class UserResource extends Resource
                         $record->update([
                             'status' => 'active',
                             'updated_by' => auth()->user()->id,
-                        ]);                        
-                        $subject = 'Auto Maid: Your Registration Status: Approved';
-                        $emailContent = (new \App\Mail\ApproveUserEmail($record->name, $subject))->render();
-                        (new \App\Services\OneSignalService())->sendEmail(
-                            $record->email,
-                            $subject,
+                        ]);
+                        $rendered = \App\Models\EmailTemplate::render(
+                            \App\Models\EmailTemplate::USER_APPROVED,
+                            ['name' => $record->name]
+                        );
+                        $emailContent = (new \App\Mail\ApproveUserEmail($record->name, $rendered['subject'], $rendered['body']))->render();
+                        (new \App\Services\OneSignalService())->notifyUser(
+                            $record,
+                            \App\Models\CustomerNotification::ACCOUNT_APPROVED,
+                            $rendered['subject'],
+                            'Your application has been approved — you can start now.',
                             $emailContent
                         );
                     })

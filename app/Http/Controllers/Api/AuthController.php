@@ -411,16 +411,20 @@ class AuthController extends Controller
                 // $user->notify(new WelcomeMailNotification($user));
 
                 // send email + in-app notification + push
-                $subject = 'Welcome to Auto Maid,' . ' "' . $user->name . '" ';
-                $emailContent = (new RegisterEmail($user->name, $user->email, $subject))->render();
+                $rendered = \App\Models\EmailTemplate::render(
+                    \App\Models\EmailTemplate::CUSTOMER_WELCOME,
+                    ['name' => $user->name]
+                );
+                $emailContent = (new RegisterEmail($user->name, $user->email, $rendered['subject'], $rendered['body']))->render();
                 $onesignal = new OneSignalService();
                 $onesignal->notifyUser(
                     $user,
                     \App\Models\CustomerNotification::ACCOUNT_CREATED,
-                    $subject,
+                    $rendered['subject'],
                     'Welcome to Auto Maid! Your account is ready.',
                     $emailContent,
                 );
+
             }
 
             $user->load('roles');

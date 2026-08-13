@@ -21,6 +21,7 @@ class CustomerNotification extends Model
     protected $table = 'customer_notifications';
 
     const ACCOUNT_CREATED = 'account_created';
+    const ACCOUNT_APPROVED = 'account_approved';
     const BAG_PURCHASED = 'bag_purchased';
     const SUBSCRIPTION_CREATED = 'subscription_created';
     const SUBSCRIPTION_CANCELLED = 'subscription_cancelled';

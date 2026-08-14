@@ -101,6 +101,15 @@ class RiderController extends Controller
                 // email belongs to a previously soft-deleted account,
                 // rather than always inserting a fresh row (which would
                 // crash on the hard unique constraint for `email`).
+                //
+                // Everything from here through the OTP send is wrapped
+                // in a transaction — see the matching comment in
+                // MerchantController::register() for why: without this,
+                // a failure partway through (e.g. a bad field mapping)
+                // left the User row committed with no matching Rider
+                // profile, permanently stuck — blocked from
+                // re-registering, but with no way to complete either.
+                \Illuminate\Support\Facades\DB::beginTransaction();
                 if ($user && $user->trashed()) {
                     $user->restore();
                     $user->name = $request->name ?? null;
@@ -216,6 +225,9 @@ class RiderController extends Controller
                     $city_user->save();
                 }
 
+                // All writes succeeded — commit before the OTP send.
+                \Illuminate\Support\Facades\DB::commit();
+
                 $sms = OneWaySmsService::make();
                 $send = $sms->processOtp($user->mobile_no);
                 if ($send['status'] != 'success') {
@@ -263,6 +275,9 @@ class RiderController extends Controller
             }
 
         } catch (\Throwable $th) {
+            if (\Illuminate\Support\Facades\DB::transactionLevel() > 0) {
+                \Illuminate\Support\Facades\DB::rollBack();
+            }
             return response()->json([
                 'status' => false,
                 'message' => $th->getMessage(),

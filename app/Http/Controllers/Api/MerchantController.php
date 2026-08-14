@@ -94,6 +94,18 @@ class MerchantController extends Controller
                     ]);
                 }
 
+                // Everything from here through the OTP send is wrapped
+                // in a transaction — previously, if anything in this
+                // sequence failed partway (e.g. the business_option bug
+                // just fixed above), the User row from an earlier step
+                // stayed committed with no matching Merchant row, and
+                // that email was then permanently stuck: blocked from
+                // re-registering, but with no way to complete the
+                // profile either. Wrapping this means any failure here
+                // now cleanly rolls back everything, and the email is
+                // immediately free to try again.
+                \Illuminate\Support\Facades\DB::beginTransaction();
+
                 // check outlet
                 $chk_outlet = Outlet::where(['name' => $request->company_name, 'city' => $request->city, 'address_line_1' => $request->address_line_1])->first();
                 if (!$chk_outlet) {
@@ -223,7 +235,16 @@ class MerchantController extends Controller
                 $merchant->bank_name = $request->bank_name ?? null;
                 $merchant->bank_no = $request->bank_no ?? null;
 
-                $merchant->business_option = $request->business_option ?? null;
+                // merchants.business_option is an unsignedInteger column
+                // (1=Corporate, 2=JV, 3=Franchise per its migration
+                // comment) — same class of mismatch as id_type: the app
+                // sends the human-readable label, needs mapping here.
+                $merchant->business_option = match (strtoupper((string) $request->business_option)) {
+                    'CORPORATE' => 1,
+                    'JV' => 2,
+                    'FRANCHISE' => 3,
+                    default => null,
+                };
                 $merchant->service_categories = $request->service_categories ?? null;
                 $merchant->save();
 
@@ -250,6 +271,12 @@ class MerchantController extends Controller
                     $city_user->created_by = $user->id;
                     $city_user->save();
                 }
+
+                // All writes succeeded — commit before the OTP send,
+                // which is an external SMS side-effect that shouldn't
+                // be inside the DB transaction at all (an OTP failure
+                // shouldn't roll back a successfully created account).
+                \Illuminate\Support\Facades\DB::commit();
 
                 $sms = OneWaySmsService::make();
                 $send = $sms->processOtp($user->mobile_no);
@@ -298,6 +325,9 @@ class MerchantController extends Controller
             }
 
         } catch (\Throwable $th) {
+            if (\Illuminate\Support\Facades\DB::transactionLevel() > 0) {
+                \Illuminate\Support\Facades\DB::rollBack();
+            }
             return response()->json([
                 'status' => false,
                 'message' => $th->getMessage(),

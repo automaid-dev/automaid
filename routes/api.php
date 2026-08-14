@@ -163,6 +163,7 @@ Route::middleware('auth:sanctum')->group( function () {
 		// home
 		Route::post('/home', [\App\Http\Controllers\Api\Rider\HomeController::class, 'home']);
 		Route::post('/home/duty', [\App\Http\Controllers\Api\Rider\HomeController::class, 'updateDuty']);
+		Route::post('/activity/history', [\App\Http\Controllers\Api\Rider\HomeController::class, 'activityHistory']);
 
 		// profile
 		Route::post('/profile', [\App\Http\Controllers\Api\Rider\ProfileController::class, 'profile']);
@@ -206,6 +207,7 @@ Route::middleware('auth:sanctum')->group( function () {
 		// home
 		Route::post('/home', [\App\Http\Controllers\Api\Merchant\HomeController::class, 'home']);
 		Route::post('/home/duty', [\App\Http\Controllers\Api\Merchant\HomeController::class, 'updateDuty']);
+		Route::post('/activity/history', [\App\Http\Controllers\Api\Merchant\HomeController::class, 'activityHistory']);
 
 		// select cities
 		Route::post('/home/city', [\App\Http\Controllers\Api\Merchant\HomeController::class, 'selectCity']);

@@ -203,5 +203,47 @@ class HomeController extends Controller
         }
     }
 
+    /**
+     * Every activity (accepted, delivered, cancelled by admin, etc.)
+     * this rider has been involved in — newest first. Didn't exist
+     * before; the rider app only ever showed today's/incoming active
+     * jobs, with no way to see what happened to a job afterward
+     * (including an admin cancellation, which just made the job
+     * disappear with no explanation).
+     *
+     * @param  Request $request [description]
+     * @return [type]           [description]
+     */
+    public function activityHistory(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $activities = \App\Models\Activity::where('user_type', 'rider')
+                ->where('rider_id', $user->id)
+                ->with(['order.booking'])
+                ->orderByDesc('id')
+                ->limit(100)
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => ['activities' => $activities],
+                'message' => 'Successfully retrieved activity history.',
+            ]);
+
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
 
 }

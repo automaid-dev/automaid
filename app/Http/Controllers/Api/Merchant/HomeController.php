@@ -208,6 +208,45 @@ class HomeController extends Controller
         }
     }
 
+    /**
+     * Every activity this merchant has been involved in — newest
+     * first. Same reasoning as the matching rider endpoint: previously
+     * no way to see what happened to a job after it left the active
+     * dashboard, including an admin cancellation.
+     *
+     * @param  Request $request [description]
+     * @return [type]           [description]
+     */
+    public function activityHistory(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
 
+            $activities = \App\Models\Activity::where('user_type', 'merchant')
+                ->where('merchant_id', $user->id)
+                ->with(['order.booking'])
+                ->orderByDesc('id')
+                ->limit(100)
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => ['activities' => $activities],
+                'message' => 'Successfully retrieved activity history.',
+            ]);
+
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
 
 }

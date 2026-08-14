@@ -201,6 +201,17 @@ class OrderController extends Controller
      * [orderActive description]
      * @return [type] [description]
      */
+    /**
+     * Every order for the logged-in customer, any status — this was a
+     * complete stub before (fetched AssignJob::get() with no scoping to
+     * this user at all, and never returned a response). The customer
+     * app's order list previously worked around this by reusing the
+     * home dashboard's "active bookings" data instead, which is why a
+     * cancelled order never showed up anywhere — it was never
+     * "active" to begin with. This is now the real, working endpoint.
+     *
+     * @return [type] [description]
+     */
     public function orderActive()
     {
         try {
@@ -212,9 +223,18 @@ class OrderController extends Controller
                 ]);  
             }
 
-            // check assign jobs
-            $jobs = AssignJob::get();
-            
+            $orders = Order::where('user_id', $user->id)
+                ->where('order_type', Order::BOOKING)
+                ->with(['booking'])
+                ->orderByDesc('id')
+                ->limit(100)
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => ['orders' => $orders],
+                'message' => 'Successfully retrieved orders.',
+            ]);
 
         } catch (\Throwable $th) {
             return response()->json([

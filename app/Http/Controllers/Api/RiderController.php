@@ -29,8 +29,19 @@ class RiderController extends Controller
     public function register(Request $request)
     {
         try {
+            // Look up the user FIRST — needed so the email-uniqueness
+            // check below can correctly ignore this person's own row if
+            // they're resuming a pending registration. withTrashed()
+            // also catches a previously soft-deleted account.
+            $user = User::withTrashed()->where('email', $request->email)->first();
+
+            // IMPORTANT: ignores the found user's own id — see the
+            // matching comment in MerchantController::register() for
+            // why this was a real bug (permanently blocked anyone whose
+            // first registration attempt actually succeeded server-side
+            // despite a client-side timeout, from ever resuming it).
             $validateEmail = Validator::make($request->all(), [
-                'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')],             
+                'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')->ignore($user?->id)],             
             ]);
             if ($validateEmail->fails()) {
                 return response()->json([
@@ -39,15 +50,6 @@ class RiderController extends Controller
                     'errors' => $validateEmail->errors()
                 ]);
             }
-
-            // check user — include soft-deleted rows too, since `email`
-            // has a hard unique DB constraint: only checking non-deleted
-            // rows here would let validation pass for a soft-deleted
-            // user's email, then crash on a duplicate-key error at the
-            // INSERT step below (same class of bug already fixed on the
-            // customer registration flow — this controller just never
-            // got the same fix).
-            $user = User::withTrashed()->where('email', $request->email)->first();
 
             // new user, or a previously soft-deleted account re-registering
             if (!$user || $user->trashed()) {            

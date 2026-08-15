@@ -30,8 +30,25 @@ class MerchantController extends Controller
     public function register(Request $request)
     {
         try {
+            // Look up the user FIRST, before any email-uniqueness check —
+            // needed so that check can correctly ignore this person's own
+            // row if they're resuming a pending registration (see below).
+            // withTrashed() also catches a previously soft-deleted
+            // account, so validation doesn't reject an email that's
+            // actually free to reuse.
+            $user = User::withTrashed()->where('email', $request->email)->first();
+
+            // IMPORTANT: this must ignore the found user's own id.
+            // Previously this check ran unconditionally against ANY
+            // existing non-deleted row — which meant a merchant whose
+            // FIRST registration attempt actually succeeded server-side
+            // (e.g. after a client-side timeout on document upload, even
+            // though the request completed) could never get past this
+            // check on a retry: correctly pending, correctly complete,
+            // but permanently blocked from ever reaching the OTP resend
+            // path below, with no way to finish their own registration.
             $validateEmail = Validator::make($request->all(), [
-                'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')],             
+                'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->whereNull('deleted_at')->ignore($user?->id)],             
             ]);            
             if ($validateEmail->fails()) {
                 return response()->json([
@@ -40,15 +57,6 @@ class MerchantController extends Controller
                     'errors' => $validateEmail->errors()
                 ]);
             }
-
-            // check user — include soft-deleted rows too, since `email`
-            // has a hard unique DB constraint: only checking non-deleted
-            // rows here would let validation pass for a soft-deleted
-            // user's email, then crash on a duplicate-key error at the
-            // INSERT step below (same class of bug already fixed on the
-            // customer registration flow — this controller just never
-            // got the same fix).
-            $user = User::withTrashed()->where('email', $request->email)->first();            
 
             // new user, or a previously soft-deleted account re-registering
             if (!$user || $user->trashed()) {

@@ -76,9 +76,43 @@ class BookingController extends Controller
      * $has_quota parameters are kept (unused) so every existing call
      * site keeps working without needing to be touched.
      */
+    /**
+     * Tiered delivery pricing: the 1st bag is always charged the full
+     * $price (Settings > delivery_price). Every additional bag (2nd
+     * onward) is charged a separate, admin-configured rate — either a
+     * flat RM amount (Settings > delivery_additional_bag_value when
+     * delivery_additional_bag_type = 'flat') or a percentage of the
+     * 1st bag's price (when type = 'percent'). Falls back to charging
+     * every bag at the full $price if these settings were never
+     * configured, matching the previous flat-rate behavior exactly.
+     *
+     * Example: delivery_price = RM10, additional bag = RM5 flat, 3 bags
+     * -> 10 + 5 + 5 = RM20. Same 3 bags with additional bag = 100%
+     * (i.e. same as 1st bag) -> 10 + 10 + 10 = RM30.
+     */
     public function calculateDeliveryRate($subscription, $quantity, $price, $total_bag_free_delivery, $has_quota = true)
     {
-        return $price * $quantity;
+        if ($quantity <= 0) {
+            return 0;
+        }
+
+        $setting = Setting::find(1);
+        $additionalType = $setting->delivery_additional_bag_type ?? 'flat';
+        $additionalValue = $setting->delivery_additional_bag_value;
+
+        // Not configured — fall back to the old flat-rate-per-bag
+        // behavior exactly, so nothing changes until admin actually
+        // sets a value for this.
+        if ($additionalValue === null) {
+            return $price * $quantity;
+        }
+
+        $additionalBagRate = $additionalType === 'percent'
+            ? round($price * ($additionalValue / 100), 2)
+            : (float) $additionalValue;
+
+        $additionalBagCount = $quantity - 1;
+        return round($price + ($additionalBagCount * $additionalBagRate), 2);
     }
 
     /**

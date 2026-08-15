@@ -101,12 +101,30 @@ class EditSetting extends EditRecord
                                                             ->numeric()
                                                             ->helperText('per Bag'),
                                                         TextInput::make('delivery_price')
-                                                            ->label('Delivery Fee (RM)')
+                                                            ->label('Delivery Fee — 1st Bag (RM)')
                                                             ->placeholder('e.g., 10')
                                                             ->formatStateUsing(fn (string $state): string => number_format($state, 2))
                                                             ->required()
                                                             ->numeric()
-                                                            ->helperText('per Bag'),
+                                                            ->helperText('Charged for the 1st bag in every order'),
+                                                        \Filament\Forms\Components\Select::make('delivery_additional_bag_type')
+                                                            ->label('2nd Bag Onward — Charge As')
+                                                            ->options([
+                                                                'flat' => 'Flat amount (RM)',
+                                                                'percent' => 'Percentage of 1st bag price',
+                                                            ])
+                                                            ->default('flat')
+                                                            ->live()
+                                                            ->helperText('How each additional bag beyond the 1st is priced'),
+                                                        TextInput::make('delivery_additional_bag_value')
+                                                            ->label(fn (\Filament\Forms\Get $get) => $get('delivery_additional_bag_type') === 'percent'
+                                                                ? '2nd Bag Onward — Percentage (%)'
+                                                                : '2nd Bag Onward — Amount (RM)')
+                                                            ->placeholder(fn (\Filament\Forms\Get $get) => $get('delivery_additional_bag_type') === 'percent' ? 'e.g., 50' : 'e.g., 5')
+                                                            ->numeric()
+                                                            ->helperText(fn (\Filament\Forms\Get $get) => $get('delivery_additional_bag_type') === 'percent'
+                                                                ? 'e.g. 50 means each additional bag is charged 50% of the 1st bag delivery price'
+                                                                : 'Charged per additional bag — e.g. RM5 means the 2nd, 3rd, etc. bags are each RM5, regardless of the 1st bag price. Leave blank to charge every bag the same as the 1st bag (old behavior).'),
                                                         TextInput::make('bag_price')
                                                             ->label('Laundry Bag Price (RM)')
                                                             ->placeholder('e.g., 10')

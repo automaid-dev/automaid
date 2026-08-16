@@ -57,7 +57,7 @@ class OrderResource extends Resource
                     ->rowIndex()
                     ->sortable(), 
                 TextColumn::make('series_no')
-                    ->formatStateUsing(fn ($record) => "Date: "."{$record->booking->pickup_date}".'<br>ID: '."{$record->series_no}")
+                    ->formatStateUsing(fn ($record) => "Date: "."{$record->booking->pickup_date}".'<br>Order #: <strong>'."{$record->id}".'</strong><br>ID: '."{$record->series_no}")
                     ->html()
                     ->label('Orders')
                     ->sortable(),

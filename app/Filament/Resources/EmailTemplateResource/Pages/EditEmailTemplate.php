@@ -57,7 +57,7 @@ class EditEmailTemplate extends EditRecord
                         if (!empty($response['errors'])) {
                             Notification::make()
                                 ->title('OneSignal rejected the test email')
-                                ->body(is_array($response['errors']) ? implode(', ', $response['errors']) : $response['errors'])
+                                ->body(is_string($response['errors']) ? $response['errors'] : json_encode($response['errors']))
                                 ->danger()
                                 ->send();
                         } else {

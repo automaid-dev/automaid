@@ -33,11 +33,12 @@ class OneSignalService
         $this->apiKey = $config['api_key'];
 
         $response = Http::withHeaders([
-            'Authorization' => 'Basic ' . $this->apiKey,
-            'Content-Type'  => 'application/json',
-        ])->post("https://onesignal.com/api/v1/notifications", [
+            'Authorization' => 'Key ' . $this->apiKey,
+            'Content-Type'  => 'application/json; charset=utf-8',
+        ])->post("https://api.onesignal.com/notifications?c=email", [
             'app_id'    => $this->appId,
             'include_email_tokens' => [$email],
+            'include_unsubscribed' => true, // Bypasses subscription status check for tokens
             'email_subject' => $subject,
             'email_body' => $content,
         ]);
@@ -85,8 +86,8 @@ class OneSignalService
 
         $response = Http::withHeaders([
             'Content-Type' => 'application/json; charset=utf-8',
-            'Authorization' => 'Basic ' . $this->apiKey,
-        ])->post('https://onesignal.com/api/v1/notifications', $fields);
+            'Authorization' => 'Key ' . $this->apiKey,
+        ])->post('https://api.onesignal.com/notifications', $fields);
         return $response->json();
     }
 

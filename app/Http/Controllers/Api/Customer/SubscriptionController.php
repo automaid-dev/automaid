@@ -183,6 +183,11 @@ class SubscriptionController extends Controller
                 'bill_mobile' => $order->billing_phone,
                 'bill_desc' => 'Subscription',
                 'currency' => 'MYR',
+                // Fiuu's recurring billing only works with card
+                // payment — any other channel (eWallet, FPX, etc.)
+                // can't be auto-charged for renewal, so subscription
+                // purchases are restricted to card only at checkout.
+                'channel' => 'CC',
             ]);
 
             // return payment url (+ order_id so the app can verify
@@ -329,6 +334,9 @@ class SubscriptionController extends Controller
                 'bill_mobile' => $order->billing_phone,
                 'bill_desc' => 'Subscription Upgrade',
                 'currency' => 'MYR',
+                // See the matching comment on the initial subscribe
+                // flow — recurring only works with card.
+                'channel' => 'CC',
             ]);
 
             $data['url'] = $paymentUrl;
@@ -445,6 +453,9 @@ class SubscriptionController extends Controller
                 'bill_mobile' => $order->billing_phone,
                 'bill_desc' => 'Subscription Renewal',
                 'currency' => 'MYR',
+                // See the matching comment on the initial subscribe
+                // flow — recurring only works with card.
+                'channel' => 'CC',
             ]);
 
             // return payment url (+ order_id so the app can verify

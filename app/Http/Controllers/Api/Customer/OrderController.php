@@ -225,7 +225,7 @@ class OrderController extends Controller
 
             $orders = Order::where('user_id', $user->id)
                 ->where('order_type', Order::BOOKING)
-                ->with(['booking'])
+                ->with(['booking', 'delivered'])
                 ->orderByDesc('id')
                 ->limit(100)
                 ->get();

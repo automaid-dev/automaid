@@ -276,7 +276,7 @@ class OrderController extends Controller
                 $order->load([
                     'booking.pickup_location', 
                     'rider_order_statuses.status', 
-                    'merchant.user.merchant',
+                    'merchant.user.merchant.outlet',
                     'order_addons.addon',
                     'delivered',
                     'qrcode_users.qrcode',
@@ -306,7 +306,7 @@ class OrderController extends Controller
                     'user.rider', 
                     'order.booking.pickup_location', 
                     'order.rider_order_statuses.status', 
-                    'order.merchant.user.merchant',
+                    'order.merchant.user.merchant.outlet',
                     'order.order_addons.addon', 
                     'order.qrcode_users.qrcode', 
                 ]);

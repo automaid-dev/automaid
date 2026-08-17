@@ -54,6 +54,7 @@ class HomeController extends Controller
                     'order.user.bag_purchases',
                     'order.user.qrcodes',
                     'order.order_addons.addon',
+                    'order.merchant.user.merchant.outlet',
                     'status',
                     'order.qrcode_users.qrcode',
                 ])

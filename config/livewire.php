@@ -64,7 +64,19 @@ return [
     */
 
     'temporary_file_upload' => [
-        'disk' => 's3',        // Example: 'local', 's3'              | Default: 'default'
+        // Was 's3' — every Filament FileUpload field's temporary
+        // upload (the moment a file is selected, before Save is even
+        // clicked) went straight from the browser to S3 via a
+        // presigned URL, which needs the S3 bucket's CORS policy to
+        // allow uploads from the admin panel's domain. That was very
+        // likely never configured, since every other upload in this
+        // app goes server-to-server and never needed CORS at all —
+        // this is probably the first Filament FileUpload field to
+        // actually get used/tested. 'local' avoids the browser-to-S3
+        // CORS requirement entirely for this temporary step; the FINAL
+        // saved file still goes to S3 exactly as before, since that's
+        // controlled separately by each field's own ->disk('s3') call.
+        'disk' => 'local',        // Example: 'local', 's3'              | Default: 'default'
         'rules' => null,       // Example: ['file', 'mimes:png,jpg']  | Default: ['required', 'file', 'max:12288'] (12MB)
         'directory' => null,   // Example: 'tmp'                      | Default: 'livewire-tmp'
         'middleware' => null,  // Example: 'throttle:5,1'             | Default: 'throttle:60,1'

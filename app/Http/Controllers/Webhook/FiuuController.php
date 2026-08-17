@@ -358,6 +358,26 @@ class FiuuController extends Controller
                     $order->booking_id = $booking->id;
                     $order->save();
 
+                    // Count this booking against the subscription's plan
+                    // order quota for this cycle, if the customer is
+                    // subscribed — mirrors the same logic in
+                    // BookingController::schedule()'s "fully free" branch.
+                    // This webhook is where a real subscribed order
+                    // actually completes now that SST is always charged
+                    // (delivery/SST mean a subscribed order essentially
+                    // never qualifies as "fully free" anymore, so
+                    // schedule()'s free-branch quota tracking almost
+                    // never runs) — without this, quota usage was never
+                    // recorded for a normal subscribed booking at all.
+                    $subscription = $order->user->subscribe;
+                    if ($subscription) {
+                        $subscription->orders_used_current_cycle = $subscription->orders_used_current_cycle + 1;
+                        $subscription->save();
+
+                        $order->used_subscription_quota = true;
+                        $order->save();
+                    }
+
                     // check voucher
                     if ($order->voucher_code) {
 
@@ -836,6 +856,26 @@ class FiuuController extends Controller
                     // update order
                     $order->booking_id = $booking->id;
                     $order->save();
+
+                    // Count this booking against the subscription's plan
+                    // order quota for this cycle, if the customer is
+                    // subscribed — mirrors the same logic in
+                    // BookingController::schedule()'s "fully free" branch.
+                    // This webhook is where a real subscribed order
+                    // actually completes now that SST is always charged
+                    // (delivery/SST mean a subscribed order essentially
+                    // never qualifies as "fully free" anymore, so
+                    // schedule()'s free-branch quota tracking almost
+                    // never runs) — without this, quota usage was never
+                    // recorded for a normal subscribed booking at all.
+                    $subscription = $order->user->subscribe;
+                    if ($subscription) {
+                        $subscription->orders_used_current_cycle = $subscription->orders_used_current_cycle + 1;
+                        $subscription->save();
+
+                        $order->used_subscription_quota = true;
+                        $order->save();
+                    }
 
                     // check voucher
                     if ($order->voucher_code) {

@@ -228,17 +228,23 @@ class HomeController extends Controller
                 ]);
             }
 
-            $activities = \App\Models\Activity::where('user_type', 'merchant')
-                ->where('merchant_id', $user->id)
-                ->with(['order.booking'])
+            // See the matching comment on Rider\HomeController's
+            // version of this method — same fix, same reasoning.
+            $orderIds = \App\Models\AssignJob::where('user_id', $user->id)
+                ->where('is_accepted', true)
+                ->distinct()
+                ->pluck('order_id');
+
+            $orders = \App\Models\Order::whereIn('id', $orderIds)
+                ->with(['booking', 'delivered'])
                 ->orderByDesc('id')
                 ->limit(100)
                 ->get();
 
             return response()->json([
                 'status' => true,
-                'data' => ['activities' => $activities],
-                'message' => 'Successfully retrieved activity history.',
+                'data' => ['orders' => $orders],
+                'message' => 'Successfully retrieved order history.',
             ]);
 
         } catch (\Throwable $th) {

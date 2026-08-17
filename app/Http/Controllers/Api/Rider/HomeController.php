@@ -225,17 +225,29 @@ class HomeController extends Controller
                 ]);
             }
 
-            $activities = \App\Models\Activity::where('user_type', 'rider')
-                ->where('rider_id', $user->id)
-                ->with(['order.booking'])
+            // Every order this rider has ever accepted, at any stage —
+            // not just ones that reached final delivery. The previous
+            // version of this query relied on the Activity model, which
+            // only gets a row written at final delivery confirmation or
+            // an admin cancellation — an order the rider accepted and is
+            // still actively working never showed up here at all, which
+            // is why this screen could show "No activity yet" even with
+            // real order history behind it.
+            $orderIds = \App\Models\AssignJob::where('user_id', $user->id)
+                ->where('is_accepted', true)
+                ->distinct()
+                ->pluck('order_id');
+
+            $orders = \App\Models\Order::whereIn('id', $orderIds)
+                ->with(['booking', 'delivered'])
                 ->orderByDesc('id')
                 ->limit(100)
                 ->get();
 
             return response()->json([
                 'status' => true,
-                'data' => ['activities' => $activities],
-                'message' => 'Successfully retrieved activity history.',
+                'data' => ['orders' => $orders],
+                'message' => 'Successfully retrieved order history.',
             ]);
 
         } catch (\Throwable $th) {

@@ -839,6 +839,9 @@ class BookingController extends Controller
                 if ($is_subscribe && $subscription) {
                     $subscription->orders_used_current_cycle = $subscription->orders_used_current_cycle + 1;
                     $subscription->save();
+
+                    $order->used_subscription_quota = true;
+                    $order->save();
                 }
 
                 // insert order status

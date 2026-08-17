@@ -49,6 +49,20 @@ class EditOrder extends EditRecord
                     $this->record->updated_by = auth()->user()->id;
                     $this->record->save();
 
+                    // Refund the subscription quota slot this order
+                    // consumed, if any — without this, a cancelled
+                    // order permanently cost the customer a free-wash
+                    // slot they never actually used.
+                    if ($this->record->used_subscription_quota) {
+                        $subscription = \App\Models\Subscription::where('user_id', $this->record->user_id)
+                            ->where('status', \App\Models\Subscription::ACTIVE)
+                            ->first();
+                        if ($subscription && $subscription->orders_used_current_cycle > 0) {
+                            $subscription->orders_used_current_cycle = $subscription->orders_used_current_cycle - 1;
+                            $subscription->save();
+                        }
+                    }
+
                     // update status booking
                     $booking = $this->record->booking;
                     $booking->status = Booking::CANCEL;

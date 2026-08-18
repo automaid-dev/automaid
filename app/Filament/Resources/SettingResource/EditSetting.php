@@ -7,7 +7,6 @@ use Filament\Forms\Components\Actions as FormActions;
 use Filament\Forms\Components\Actions;
 use Filament\Forms\Components\Actions\Action;
 use Filament\Forms\Components\Fieldset;
-use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
@@ -354,15 +353,21 @@ class EditSetting extends EditRecord
 
                                         Section::make('Legal Documents')
                                             ->schema([
-                                                FileUpload::make('terms_conditions')
+                                                Placeholder::make('terms_conditions_manual_upload')
                                                     ->label('Terms & Conditions (PDF)')
-                                                    ->disk('s3')
-                                                    ->directory('settings')
-                                                    ->acceptedFileTypes(['application/pdf'])
-                                                    ->maxSize(10240) // 10MB
-                                                    ->downloadable()
-                                                    ->openable()
-                                                    ->helperText('Shown to customers in the app as an acceptance step before booking payment.'),
+                                                    ->helperText('Shown to customers in the app as an acceptance step before booking payment.')
+                                                    ->content(fn () => new \Illuminate\Support\HtmlString(
+                                                        '<div style="display:flex;flex-direction:column;gap:8px;">' .
+                                                        ($this->record->terms_conditions_url
+                                                            ? '<div>Current file: <a href="' . e($this->record->terms_conditions_url) . '" target="_blank" style="color:#2563eb;text-decoration:underline;">view current PDF</a></div>'
+                                                            : '<div style="color:#6b7280;">No file uploaded yet.</div>')
+                                                        . '<form action="' . route('admin.settings.upload-terms') . '" method="POST" enctype="multipart/form-data" style="display:flex;align-items:center;gap:8px;">'
+                                                        . csrf_field()
+                                                        . '<input type="file" name="terms_conditions" accept="application/pdf" required style="border:1px solid #d1d5db;border-radius:6px;padding:6px;">'
+                                                        . '<button type="submit" style="background:#f59e0b;color:#fff;padding:6px 16px;border-radius:6px;border:none;cursor:pointer;">Upload</button>'
+                                                        . '</form>'
+                                                        . '</div>'
+                                                    )),
                                             ]),
 
                                         Section::make('Company Information')

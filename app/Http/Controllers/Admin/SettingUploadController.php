@@ -34,7 +34,13 @@ class SettingUploadController extends Controller
         }
 
         $file = $request->file('terms_conditions');
-        $path = $file->store('settings', 's3');
+        // 'public' visibility is required here — without it, the file
+        // uploads successfully but as a private S3 object, which is
+        // exactly why the customer app couldn't load it afterward (a
+        // 403 on fetch). Matches every other working upload in this
+        // codebase (e.g. RiderController's document uploads), which
+        // all explicitly set this.
+        $path = $file->store('settings', ['disk' => 's3', 'visibility' => 'public']);
 
         $setting->terms_conditions = $path;
         $setting->save();

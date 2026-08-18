@@ -38,3 +38,15 @@ Route::get('/qrcode/print/{series_no}', function ($series_no) {
         'qrCode' => $record->series_no,
     ]);
 })->name('qrcode.print');
+
+// Traditional (non-Livewire) file upload for admin settings — see
+// SettingUploadController's doc comment for why this exists: Filament's
+// Livewire FileUpload goes through a special AJAX endpoint
+// (/livewire/upload-file) that Cloudflare was rejecting with a 401,
+// even with no Zero Trust or explicit security rules enabled. This is
+// a plain form POST instead, same pattern as the rider/merchant
+// document uploads that already work reliably.
+Route::middleware(['web', 'auth'])->group(function () {
+    Route::post('/admin/settings/upload-terms', [\App\Http\Controllers\Admin\SettingUploadController::class, 'uploadTerms'])
+        ->name('admin.settings.upload-terms');
+});

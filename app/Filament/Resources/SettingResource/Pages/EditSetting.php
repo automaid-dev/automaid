@@ -7,7 +7,6 @@ use Filament\Forms\Components\Actions as FormActions;
 use Filament\Forms\Components\Actions;
 use Filament\Forms\Components\Actions\Action;
 use Filament\Forms\Components\Fieldset;
-use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Repeater;
@@ -17,6 +16,7 @@ use Filament\Forms\Components\Split;
 use Filament\Forms\Components\Tabs;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\TimePicker;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\View;
 use Filament\Forms\Form;
@@ -100,12 +100,30 @@ class EditSetting extends EditRecord
                                                             ->numeric()
                                                             ->helperText('per Bag'),
                                                         TextInput::make('delivery_price')
-                                                            ->label('Delivery Fee (RM)')
+                                                            ->label('Delivery Fee — 1st Bag (RM)')
                                                             ->placeholder('e.g., 10')
                                                             ->formatStateUsing(fn (string $state): string => number_format($state, 2))
                                                             ->required()
                                                             ->numeric()
-                                                            ->helperText('per Bag'),
+                                                            ->helperText('Charged for the 1st bag in every order'),
+                                                        \Filament\Forms\Components\Select::make('delivery_additional_bag_type')
+                                                            ->label('2nd Bag Onward — Charge As')
+                                                            ->options([
+                                                                'flat' => 'Flat amount (RM)',
+                                                                'percent' => 'Percentage of 1st bag price',
+                                                            ])
+                                                            ->default('flat')
+                                                            ->live()
+                                                            ->helperText('How each additional bag beyond the 1st is priced'),
+                                                        TextInput::make('delivery_additional_bag_value')
+                                                            ->label(fn (\Filament\Forms\Get $get) => $get('delivery_additional_bag_type') === 'percent'
+                                                                ? '2nd Bag Onward — Percentage (%)'
+                                                                : '2nd Bag Onward — Amount (RM)')
+                                                            ->placeholder(fn (\Filament\Forms\Get $get) => $get('delivery_additional_bag_type') === 'percent' ? 'e.g., 50' : 'e.g., 5')
+                                                            ->numeric()
+                                                            ->helperText(fn (\Filament\Forms\Get $get) => $get('delivery_additional_bag_type') === 'percent'
+                                                                ? 'e.g. 50 means each additional bag is charged 50% of the 1st bag delivery price'
+                                                                : 'Charged per additional bag — e.g. RM5 means the 2nd, 3rd, etc. bags are each RM5, regardless of the 1st bag price. Leave blank to charge every bag the same as the 1st bag (old behavior).'),
                                                         TextInput::make('bag_price')
                                                             ->label('Laundry Bag Price (RM)')
                                                             ->placeholder('e.g., 10')
@@ -133,6 +151,15 @@ class EditSetting extends EditRecord
                                                             ->placeholder('e.g., 2')
                                                             ->numeric()
                                                             ->helperText('per Order'),
+                                                        TextInput::make('sst_percent')
+                                                            ->label('SST (%)')
+                                                            ->placeholder('e.g., 8')
+                                                            ->numeric()
+                                                            ->helperText('Applied to washing + delivery charges on every booking'),
+                                                        TimePicker::make('same_day_cutoff_time')
+                                                            ->label('Same-Day Delivery Cutoff Time')
+                                                            ->seconds(false)
+                                                            ->helperText('Bookings for today must start before this time'),
                                                     ]),
                                             ]),
 
@@ -326,15 +353,21 @@ class EditSetting extends EditRecord
 
                                         Section::make('Legal Documents')
                                             ->schema([
-                                                FileUpload::make('terms_conditions')
+                                                Placeholder::make('terms_conditions_manual_upload')
                                                     ->label('Terms & Conditions (PDF)')
-                                                    ->disk('s3')
-                                                    ->directory('settings')
-                                                    ->acceptedFileTypes(['application/pdf'])
-                                                    ->maxSize(10240) // 10MB
-                                                    ->downloadable()
-                                                    ->openable()
-                                                    ->helperText('Shown to customers in the app as an acceptance step before booking payment.'),
+                                                    ->helperText('Shown to customers in the app as an acceptance step before booking payment.')
+                                                    ->content(fn () => new \Illuminate\Support\HtmlString(
+                                                        '<div style="display:flex;flex-direction:column;gap:8px;">' .
+                                                        ($this->record->terms_conditions_url
+                                                            ? '<div>Current file: <a href="' . e($this->record->terms_conditions_url) . '" target="_blank" style="color:#2563eb;text-decoration:underline;">view current PDF</a></div>'
+                                                            : '<div style="color:#6b7280;">No file uploaded yet.</div>')
+                                                        . '<form action="' . route('admin.settings.upload-terms') . '" method="POST" enctype="multipart/form-data" style="display:flex;align-items:center;gap:8px;">'
+                                                        . csrf_field()
+                                                        . '<input type="file" name="terms_conditions" accept="application/pdf" required style="border:1px solid #d1d5db;border-radius:6px;padding:6px;">'
+                                                        . '<button type="submit" style="background:#f59e0b;color:#fff;padding:6px 16px;border-radius:6px;border:none;cursor:pointer;">Upload</button>'
+                                                        . '</form>'
+                                                        . '</div>'
+                                                    )),
                                             ]),
 
                                         Section::make('Company Information')

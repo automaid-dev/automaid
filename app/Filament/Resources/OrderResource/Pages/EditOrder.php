@@ -189,12 +189,48 @@ class EditOrder extends EditRecord
             else {
 
                 if ($this->record->rider_pending) {
-                    $this->record->rider_pending->is_accepted = true;
-                    $this->record->rider_pending->accepted_by = $data['rider_id'];
-                    $this->record->rider_pending->accepted_at = now();
-                    $this->record->rider_pending->updated_by = auth()->user()->id;
-                    $this->record->rider_pending->updated_at = now();
-                    $this->record->rider_pending->save();     
+                    if ($this->record->rider_pending->user_id == $data['rider_id']) {
+                        // Re-assigning the SAME rider who already has a
+                        // pending, not-yet-accepted job — previously this
+                        // force-set is_accepted=true here, silently
+                        // accepting on the rider's behalf without them
+                        // ever tapping anything, which is exactly what
+                        // made the job vanish from their Incoming tab.
+                        // Just keep it visible as a genuine pending job —
+                        // leave acceptance to the rider.
+                        $this->record->rider_pending->is_queue = true;
+                        $this->record->rider_pending->updated_by = auth()->user()->id;
+                        $this->record->rider_pending->save();
+                    } else {
+                        // Switching to a DIFFERENT rider while a pending
+                        // job exists for the old one — retire the stale
+                        // job and create a fresh pending job for the new
+                        // rider, rather than mutating the old job in place
+                        // (which previously left user_id pointing at the
+                        // old rider while accepted_by pointed at the new
+                        // one — a genuine data mismatch).
+                        $this->record->rider_pending->is_queue = false;
+                        $this->record->rider_pending->updated_by = auth()->user()->id;
+                        $this->record->rider_pending->save();
+
+                        $status = OrderStatus::firstOrCreate(
+                            [
+                                'order_id' => $this->record->id, 
+                                'code' => OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE, 
+                                'is_done' => true,
+                                'done_at' => now(),
+                                'created_by' => auth()->user()->id,
+                            ]
+                        );
+                        $job = new AssignJob();
+                        $job->code = OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE;
+                        $job->user_id = $data['rider_id'];
+                        $job->order_id = $this->record->id;
+                        $job->order_status_id = $status->id;
+                        $job->is_queue = true;
+                        $job->is_accepted = false;
+                        $job->save();
+                    }
                 }
                 else {
 
@@ -247,12 +283,50 @@ class EditOrder extends EditRecord
             // assign new merchant
             else {
                 if ($this->record->merchant_pending) {
-                    $this->record->merchant_pending->is_accepted = true;
-                    $this->record->merchant_pending->accepted_by = $data['merchant_id'];
-                    $this->record->merchant_pending->accepted_at = now();
-                    $this->record->merchant_pending->updated_by = auth()->user()->id;
-                    $this->record->merchant_pending->updated_at = now();
-                    $this->record->merchant_pending->save();
+                    if ($this->record->merchant_pending->user_id == $data['merchant_id']) {
+                        // Re-assigning the SAME merchant who already has a
+                        // pending, not-yet-accepted job — previously this
+                        // force-set is_accepted=true here, silently
+                        // accepting on the merchant's behalf without them
+                        // ever tapping anything. That's exactly what made
+                        // the job vanish from their Incoming tab (which
+                        // filters on is_accepted=false). Just ensure it's
+                        // still visible as a genuine pending job instead —
+                        // leave acceptance to the merchant.
+                        $this->record->merchant_pending->is_queue = true;
+                        $this->record->merchant_pending->updated_by = auth()->user()->id;
+                        $this->record->merchant_pending->save();
+                    } else {
+                        // Switching to a DIFFERENT merchant while a pending
+                        // job exists for the old one — the old job is now
+                        // stale (previously this incorrectly mutated it in
+                        // place, setting accepted_by to the NEW merchant's
+                        // id while user_id stayed pointing at the OLD one,
+                        // a genuine data-integrity mismatch). Retire it and
+                        // create a fresh pending job for the new merchant,
+                        // matching the brand-new-assignment path below.
+                        $this->record->merchant_pending->is_queue = false;
+                        $this->record->merchant_pending->updated_by = auth()->user()->id;
+                        $this->record->merchant_pending->save();
+
+                        $status = OrderStatus::firstOrCreate(
+                            [
+                                'order_id' => $this->record->id, 
+                                'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE, 
+                                'is_done' => true,
+                                'done_at' => now(),
+                                'created_by' => auth()->user()->id,
+                            ]
+                        );
+                        $job = new AssignJob();
+                        $job->code = OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE;
+                        $job->user_id = $data['merchant_id'];
+                        $job->order_id = $this->record->id;
+                        $job->order_status_id = $status->id;
+                        $job->is_queue = true;
+                        $job->is_accepted = false;
+                        $job->save();
+                    }
                 }
                 else {
 

@@ -44,6 +44,12 @@ Route::get('/qrcode/print/{series_no}', function ($series_no) {
 Route::get('/documents/terms-conditions', [\App\Http\Controllers\PublicDocumentController::class, 'termsConditions'])
     ->name('documents.terms-conditions');
 
+// Same reasoning, for order handoff photos (rider pickup, merchant
+// wash, delivery, etc.) — same S3 bucket, same Block Public Access
+// restriction.
+Route::get('/documents/step-photo/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'stepPhoto'])
+    ->name('documents.step-photo');
+
 // Traditional (non-Livewire) file upload for admin settings — see
 // SettingUploadController's doc comment for why this exists: Filament's
 // Livewire FileUpload goes through a special AJAX endpoint

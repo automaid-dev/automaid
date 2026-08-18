@@ -44,6 +44,7 @@ class DeliveryController extends Controller
             // check input
             $validate = Validator::make($request->all(), [
                 'assign_id' => 'required',
+                'image' => 'required|image|max:10240', // 10MB — a photo is required to confirm delivery, matching every other handoff step
             ]);
             if ($validate->fails()) {
                 return response()->json([
@@ -132,6 +133,18 @@ class DeliveryController extends Controller
             $complete = OrderComplete::firstOrCreate([
                 'order_id' => $order->id, 
                 'status' => OrderComplete::DELIVERED,
+                'created_by' => $user->id,
+            ]);
+
+            // Photo is required (validated above) — stored the same way
+            // as every other handoff step's photo, via OrderStepPhoto,
+            // rather than OrderComplete's own unused image1/2/3 columns,
+            // so all step photos live in one consistent place.
+            \App\Models\OrderStepPhoto::create([
+                'order_id' => $order->id,
+                'code' => OrderStatus::RIDER_ORDER_DELIVERED,
+                'image_path' => $request->file('image')->store('order_steps', 's3'),
+                'remark' => $request->remark,
                 'created_by' => $user->id,
             ]);
 

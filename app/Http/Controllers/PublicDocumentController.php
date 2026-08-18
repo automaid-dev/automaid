@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Setting;
+use App\Models\OrderStepPhoto;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 
@@ -44,6 +45,31 @@ class PublicDocumentController extends Controller
         return response($contents, 200, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="terms-and-conditions.pdf"',
+            'Cache-Control' => 'public, max-age=3600',
+        ]);
+    }
+
+    /**
+     * Serves a single order handoff photo (rider pickup, merchant wash
+     * start/complete, rider delivery, etc.) the same way — see the
+     * class-level doc comment for why. Looked up by hashslug rather
+     * than numeric id, matching the unguessable-URL convention already
+     * used throughout this app for anything shared outside an
+     * authenticated API call.
+     */
+    public function stepPhoto(string $hashslug): Response
+    {
+        $photo = OrderStepPhoto::where('hashslug', $hashslug)->first();
+
+        if (!$photo || !$photo->image_path || !Storage::disk('s3')->exists($photo->image_path)) {
+            abort(404, 'Photo not found.');
+        }
+
+        $contents = Storage::disk('s3')->get($photo->image_path);
+        $mime = Storage::disk('s3')->mimeType($photo->image_path) ?? 'image/jpeg';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=3600',
         ]);
     }

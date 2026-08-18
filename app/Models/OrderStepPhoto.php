@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Guava\Sqids\Facades\Sqids;
-use Illuminate\Support\Facades\Storage;
 
 class OrderStepPhoto extends Model
 {
@@ -26,12 +25,17 @@ class OrderStepPhoto extends Model
     }
 
     /**
-     * [getImageUrlAttribute description]
+     * Proxied through PublicDocumentController rather than a raw S3
+     * URL — same reasoning as Setting::terms_conditions_url: this S3
+     * bucket has Block Public Access / ACLs disabled (AWS's current
+     * default), so a direct S3 URL returns AccessDenied regardless of
+     * upload visibility settings. Every step photo uploaded via this
+     * model has been equally affected — not just one file.
      * @return [type] [description]
      */
     public function getImageUrlAttribute()
     {
-        return $this->image_path ? Storage::disk('s3')->url($this->image_path) : null;
+        return $this->image_path ? route('documents.step-photo', $this->hashslug) : null;
     }
 
     /**

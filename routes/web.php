@@ -39,6 +39,11 @@ Route::get('/qrcode/print/{series_no}', function ($series_no) {
     ]);
 })->name('qrcode.print');
 
+// Serves the T&C PDF server-side rather than requiring the S3 object to
+// be public — see PublicDocumentController's doc comment for why.
+Route::get('/documents/terms-conditions', [\App\Http\Controllers\PublicDocumentController::class, 'termsConditions'])
+    ->name('documents.terms-conditions');
+
 // Traditional (non-Livewire) file upload for admin settings — see
 // SettingUploadController's doc comment for why this exists: Filament's
 // Livewire FileUpload goes through a special AJAX endpoint

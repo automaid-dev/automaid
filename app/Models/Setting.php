@@ -6,7 +6,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use OwenIt\Auditing\Contracts\Auditable;
 use Guava\Sqids\Facades\Sqids;
-use Illuminate\Support\Facades\Storage;
 
 class Setting extends Model implements Auditable
 {
@@ -24,7 +23,15 @@ class Setting extends Model implements Auditable
      */
     public function getTermsConditionsUrlAttribute()
     {
-        return $this->terms_conditions ? Storage::disk('s3')->url($this->terms_conditions) : null;
+        // Proxied through PublicDocumentController rather than a raw S3
+        // URL — the S3 bucket has Block Public Access / ACLs disabled
+        // (AWS's current default), so a direct S3 URL returns
+        // AccessDenied regardless of the object's own visibility
+        // setting. This works without needing to touch bucket-wide
+        // public-access settings at all — same bucket holds sensitive
+        // rider/merchant verification documents, so that's deliberately
+        // left alone.
+        return $this->terms_conditions ? route('documents.terms-conditions') : null;
     }
 
     /**

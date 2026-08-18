@@ -40,10 +40,10 @@ class DiagnoseAssignment extends Command
         $this->line("pickup_date: " . ($booking?->pickup_date ?? '(no booking found)'));
 
         $this->newLine();
-        $this->info('--- order_statuses (pending-acceptance rows) ---');
-        $statuses = $order->order_statuses()->whereIn('code', ['11', '21'])->get();
+        $this->info('--- order_statuses (ALL codes, not just 11/21 — a missing follow-up status, e.g. code 12 after 11 is marked done, is itself often the actual bug) ---');
+        $statuses = $order->order_statuses()->orderBy('code')->get();
         if ($statuses->isEmpty()) {
-            $this->warn('No code 11/21 order_status rows found for this order at all — nothing for the assignment command to act on.');
+            $this->warn('No order_status rows found for this order at all.');
         }
         foreach ($statuses as $s) {
             $this->line("code={$s->code} is_done=" . ($s->is_done ? 'true' : 'false') . " is_check_queue=" . ($s->is_check_queue ? 'true' : 'false'));

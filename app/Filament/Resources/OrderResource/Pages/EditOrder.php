@@ -230,6 +230,13 @@ class EditOrder extends EditRecord
                         $job->is_queue = true;
                         $job->is_accepted = false;
                         $job->save();
+
+                        // notify the newly-assigned rider — this job
+                        // needs their acceptance and previously nothing
+                        // told them it existed.
+                        if ($job->user) {
+                            event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
+                        }
                     }
                 }
                 else {
@@ -263,6 +270,13 @@ class EditOrder extends EditRecord
                     $job->is_queue = true;
                     $job->is_accepted = false;
                     $job->save();
+
+                    // notify the newly-assigned rider — this job needs
+                    // their acceptance and previously nothing told them
+                    // it existed.
+                    if ($job->user) {
+                        event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
+                    }
                 }
             }
         }
@@ -326,6 +340,13 @@ class EditOrder extends EditRecord
                         $job->is_queue = true;
                         $job->is_accepted = false;
                         $job->save();
+
+                        // notify the newly-assigned merchant — this job
+                        // needs their acceptance and previously nothing
+                        // told them it existed.
+                        if ($job->user) {
+                            event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
+                        }
                     }
                 }
                 else {
@@ -351,6 +372,13 @@ class EditOrder extends EditRecord
                     $job->is_queue = true;
                     $job->is_accepted = false;
                     $job->save();
+
+                    // notify the newly-assigned merchant — this job
+                    // needs their acceptance and previously nothing told
+                    // them it existed.
+                    if ($job->user) {
+                        event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
+                    }
                 }
             }
         }

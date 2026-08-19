@@ -66,6 +66,9 @@ class AppServiceProvider extends ServiceProvider
         Event::listen('App\Events\RiderAdminCancelOrder', 'App\Listeners\RiderAdminCancelOrder');
         Event::listen('App\Events\MerchantAdminCancelOrder', 'App\Listeners\MerchantAdminCancelOrder');
 
+        Event::listen('App\Events\RiderAdminAssignOrder', 'App\Listeners\RiderAdminAssignOrder');
+        Event::listen('App\Events\MerchantAdminAssignOrder', 'App\Listeners\MerchantAdminAssignOrder');
+
 
         // Always force HTTPS for generated URLs (route(), url(), etc.) —
         // this used to be conditional on `!app()->environment('local')`,

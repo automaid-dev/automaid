@@ -117,6 +117,7 @@ class AssignOrderToRiderAndMerchant extends Command
 
         if (count($orders) > 0) {
             foreach ($orders as $order) {
+                try {
 
                 $total_riders = 0;
                 $total_merchants = 0;
@@ -717,6 +718,30 @@ class AssignOrderToRiderAndMerchant extends Command
                         $order->is_queue_completed = true;
                         $order->save();
                     }
+                }
+
+                } catch (\Throwable $th) {
+                    // Previously nothing here — an uncaught exception
+                    // anywhere in this order's rider/merchant matching
+                    // (a bad data value, a null relation, anything)
+                    // silently killed the ENTIRE command run for every
+                    // remaining order in this batch, not just this one.
+                    // Worse, since whatever DB writes already happened
+                    // for this order before the crash point persist
+                    // (e.g. rider gets assigned, merchant doesn't), the
+                    // order looks "partially fixed" every single tick,
+                    // forever, with zero visible error anywhere except
+                    // this log line. Isolating + logging per order means
+                    // one broken order can no longer block every other
+                    // pending order from being auto-assigned, and the
+                    // real cause is now actually visible.
+                    \Log::error('AssignOrderToRiderAndMerchant failed for order', [
+                        'order_id' => $order->id ?? null,
+                        'message' => $th->getMessage(),
+                        'file' => $th->getFile(),
+                        'line' => $th->getLine(),
+                    ]);
+                    continue;
                 }
 
             }

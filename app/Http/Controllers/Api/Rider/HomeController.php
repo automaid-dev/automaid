@@ -74,10 +74,16 @@ class HomeController extends Controller
 
             $data['assign_jobs'] = [
 
-                // pending jobs - today
+                // pending jobs - today (includes anything overdue —
+                // previously this only matched pickup_date == today
+                // exactly, so a still-pending job whose pickup date had
+                // already passed matched neither this nor the
+                // "incoming" filter below and simply vanished from the
+                // dashboard entirely, with no way for the rider to see
+                // or act on it)
                 'today' => $allJobs->filter(function ($job) use ($todayDate, $shouldShowPending) {
                     return $shouldShowPending($job)
-                        && $job->booking->pickup_date == $todayDate;
+                        && $job->booking->pickup_date <= $todayDate;
                 })->values(),
 
                 // pending jobs - incoming

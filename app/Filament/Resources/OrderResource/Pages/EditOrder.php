@@ -177,12 +177,62 @@ class EditOrder extends EditRecord
 
             // update existing rider
             if ($this->record->rider) {
-                $this->record->rider->is_accepted = true;
-                $this->record->rider->accepted_by = $data['rider_id'];
-                $this->record->rider->accepted_at = now();
-                $this->record->rider->updated_by = auth()->user()->id;
-                $this->record->rider->updated_at = now();
-                $this->record->rider->save();                
+
+                // Same rider re-selected — nothing structurally changed,
+                // just refresh the audit fields.
+                if ($this->record->rider->user_id == $data['rider_id']) {
+                    $this->record->rider->updated_by = auth()->user()->id;
+                    $this->record->rider->updated_at = now();
+                    $this->record->rider->save();
+                }
+
+                // Genuinely switching to a DIFFERENT rider after the
+                // previous one already accepted. Previously this just
+                // overwrote accepted_by on the existing job in place,
+                // leaving user_id still pointing at the OLD rider — so
+                // the job stayed invisible to the NEW rider (their
+                // dashboard queries assign_jobs by user_id, which never
+                // changed) while still counting toward the OLD rider's
+                // accepted history (is_accepted stayed true under their
+                // own user_id). Soft-delete the old rider's not-yet-
+                // physically-actioned jobs (pending acceptance / ready
+                // for pickup only — never anything from code 13 onward,
+                // since by then the bag may already be physically in
+                // that rider's possession and silently reassigning it
+                // would be wrong) and create a fresh pending job for the
+                // new rider instead, same as the rider_pending
+                // reassignment case below.
+                else {
+                    AssignJob::where('order_id', $this->record->id)
+                        ->where('user_id', $this->record->rider->user_id)
+                        ->whereIn('code', [OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE, OrderStatus::RIDER_READY_FOR_PICKUP])
+                        ->delete();
+
+                    $status = OrderStatus::firstOrCreate(
+                        [
+                            'order_id' => $this->record->id,
+                            'code' => OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE,
+                            'is_done' => true,
+                            'done_at' => now(),
+                            'created_by' => auth()->user()->id,
+                        ]
+                    );
+                    $job = new AssignJob();
+                    $job->code = OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE;
+                    $job->user_id = $data['rider_id'];
+                    $job->order_id = $this->record->id;
+                    $job->order_status_id = $status->id;
+                    $job->is_queue = true;
+                    $job->is_accepted = false;
+                    $job->save();
+
+                    // notify the newly-assigned rider — this job needs
+                    // their acceptance and previously nothing told them
+                    // it existed.
+                    if ($job->user) {
+                        event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
+                    }
+                }
             }
 
             // assign new rider
@@ -286,12 +336,54 @@ class EditOrder extends EditRecord
 
             // update assigned merchant
             if ($this->record->merchant) {
-                $this->record->merchant->is_accepted = true;
-                $this->record->merchant->accepted_by = $data['merchant_id'];
-                $this->record->merchant->accepted_at = now();
-                $this->record->merchant->updated_by = auth()->user()->id;
-                $this->record->merchant->updated_at = now();
-                $this->record->merchant->save();
+
+                // Same merchant re-selected — nothing structurally
+                // changed, just refresh the audit fields.
+                if ($this->record->merchant->user_id == $data['merchant_id']) {
+                    $this->record->merchant->updated_by = auth()->user()->id;
+                    $this->record->merchant->updated_at = now();
+                    $this->record->merchant->save();
+                }
+
+                // Genuinely switching to a DIFFERENT merchant after the
+                // previous one already accepted — same reasoning and
+                // fix as the matching rider block above: soft-delete the
+                // old merchant's not-yet-physically-actioned jobs
+                // (pending acceptance / awaiting bag delivery only —
+                // never code 23 onward, since by then the bag may
+                // already be physically at that merchant's outlet) and
+                // create a fresh pending job for the new merchant.
+                else {
+                    AssignJob::where('order_id', $this->record->id)
+                        ->where('user_id', $this->record->merchant->user_id)
+                        ->whereIn('code', [OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE, OrderStatus::MERCHANT_AWAITING_BAG_DELIVERY])
+                        ->delete();
+
+                    $status = OrderStatus::firstOrCreate(
+                        [
+                            'order_id' => $this->record->id,
+                            'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
+                            'is_done' => true,
+                            'done_at' => now(),
+                            'created_by' => auth()->user()->id,
+                        ]
+                    );
+                    $job = new AssignJob();
+                    $job->code = OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE;
+                    $job->user_id = $data['merchant_id'];
+                    $job->order_id = $this->record->id;
+                    $job->order_status_id = $status->id;
+                    $job->is_queue = true;
+                    $job->is_accepted = false;
+                    $job->save();
+
+                    // notify the newly-assigned merchant — this job
+                    // needs their acceptance and previously nothing told
+                    // them it existed.
+                    if ($job->user) {
+                        event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
+                    }
+                }
             }
 
             // assign new merchant

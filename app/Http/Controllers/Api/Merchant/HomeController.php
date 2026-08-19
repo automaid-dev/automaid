@@ -261,4 +261,63 @@ class HomeController extends Controller
         }
     }
 
+    /**
+     * See the matching comment on Rider\HomeController::notifications()
+     * — same reasoning and same fix, for the merchant side.
+     */
+    public function notifications(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $notifications = $user->notifications()->limit(100)->get();
+            $unreadCount = $user->unreadNotifications()->count();
+
+            return response()->json([
+                'status' => true,
+                'data' => [
+                    'notifications' => $notifications,
+                    'unread_count' => $unreadCount,
+                ],
+                'message' => 'Successfully retrieved notifications.',
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
+
+    public function markNotificationsRead(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $user->unreadNotifications()->update(['read_at' => now()]);
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Notifications marked as read.',
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
+
 }

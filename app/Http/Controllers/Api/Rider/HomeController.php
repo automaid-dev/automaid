@@ -265,4 +265,74 @@ class HomeController extends Controller
         }
     }
 
+    /**
+     * The rider's own in-app notifications — reads from Laravel's
+     * native notifications table (via the Notifiable trait's
+     * ->notifications relation), which is where every
+     * CustomerReadyPickup / MerchantDeliveryWashOutlet / etc.
+     * notification's toArray() output actually gets saved. Previously
+     * there was no endpoint for this at all — the notification bell on
+     * this dashboard just linked to order history instead, since a
+     * real notifications screen was never built.
+     */
+    public function notifications(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $notifications = $user->notifications()->limit(100)->get();
+            $unreadCount = $user->unreadNotifications()->count();
+
+            return response()->json([
+                'status' => true,
+                'data' => [
+                    'notifications' => $notifications,
+                    'unread_count' => $unreadCount,
+                ],
+                'message' => 'Successfully retrieved notifications.',
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
+
+    /**
+     * Marks all of the rider's notifications as read — called when
+     * they open the notifications screen, same pattern as the customer
+     * app.
+     */
+    public function markNotificationsRead(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $user->unreadNotifications()->update(['read_at' => now()]);
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Notifications marked as read.',
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
+
 }

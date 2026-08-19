@@ -53,28 +53,32 @@ class RiderPendingAcceptance extends Notification implements ShouldQueue
      */
     public function toArray(object $notifiable): array
     {
-        // // have device id
-        if ($this->user->device_id) {
+        // Build the message first — this must still be saved to the
+        // database notifications table (for the in-app notification
+        // list) even when the rider has no device_id to push to, or
+        // when the OneSignal push itself fails. Previously this whole
+        // block only ran inside "if device_id" AND only returned data
+        // if the push send succeeded — so a rider with no push token
+        // registered yet (or a flaky push) got an empty notification
+        // row, which looks identical to "no notification at all" in
+        // the app.
+        $data = [
+            'title' => 'You’ve got new order',
+            'message' => "You are assigned Order {$this->job->order_id} from customer.",
+        ];
 
-            // send push notification            
-            $data = [
-                'title' => 'You’ve got new order',
-                'message' => '🛵 A fresh laundry job is waiting! Tap to accept and keep the freshness rolling!',
-            ];
+        // have device id — also send a push notification
+        if ($this->user->device_id) {
             $onesignal = new \App\Services\OneSignalService();
             $extra = ['assign_id' => $this->job->id, 'order_id' => $this->job->order_id];
-            $send = $onesignal->sendOneSignalNotification($data['title'], $data['message'], $this->user->device_id, $extra, 1);
-
-            // save notification
-            if (isset($send['id']) && !empty($send['id']) && !isset($send['errors'])) {
-                return [
-                    'title' => $data['title'],
-                    'message' => $data['message'],
-                    'assign_id' => $this->job->id,
-                    'order_id' => $this->job->order_id,
-                ];
-            }            
+            $onesignal->sendOneSignalNotification($data['title'], $data['message'], $this->user->device_id, $extra, 1);
         }
-        return [];
+
+        return [
+            'title' => $data['title'],
+            'message' => $data['message'],
+            'assign_id' => $this->job->id,
+            'order_id' => $this->job->order_id,
+        ];
     }
 }

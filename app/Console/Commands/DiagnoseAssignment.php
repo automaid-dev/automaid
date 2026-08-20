@@ -213,6 +213,23 @@ class DiagnoseAssignment extends Command
         }
 
         $this->newLine();
+        $this->info('--- Stuck queue backlog check ---');
+        // Every Notification class in this app used to implement
+        // ShouldQueue, deferring to a real queue worker that was never
+        // actually running (config/queue.php defaults to the 'database'
+        // driver, which needs `queue:work`). That's now fixed going
+        // forward, but any notification queued BEFORE the fix — like an
+        // order's original "pending acceptance" notification — is still
+        // sitting in this table untouched; the fix only stops NEW ones
+        // from getting stuck, it doesn't retroactively process old ones.
+        $stuckJobs = \DB::table('jobs')->count();
+        if ($stuckJobs > 0) {
+            $this->warn("{$stuckJobs} job(s) still stuck in the queue table, never processed. Run `php artisan queue:work --stop-when-empty` to drain all of them at once.");
+        } else {
+            $this->line('No stuck jobs — queue table is empty.');
+        }
+
+        $this->newLine();
         $this->info('--- Raw notifications table check (ground truth, bypasses the app entirely) ---');
         // Checks the actual `notifications` table directly for the
         // rider/merchant owning each code=11/21 job on this order —

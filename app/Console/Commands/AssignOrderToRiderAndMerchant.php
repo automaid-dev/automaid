@@ -688,7 +688,27 @@ class AssignOrderToRiderAndMerchant extends Command
                 }
 
                 // check total rider & merchant (1st cronjob)
-                if ($first_check && $total_riders == 0 && $total_merchants == 0) {
+                //
+                // Previously this only looked at $total_riders/$total_merchants
+                // as computed THIS tick — but a role whose is_check_queue was
+                // already true from an earlier successful match gets its
+                // re-check SKIPPED entirely on later ticks (see the
+                // `if (!$status->is_check_queue)` gate above), leaving its
+                // total at the loop's initial 0 regardless of whether it was
+                // actually matched before. That made an order where merchant
+                // was already found, but rider genuinely has zero candidates
+                // this tick, get wrongly flagged as "no active rider or
+                // merchant was found nearby" and pushed to admin — even
+                // though half of that message was false. Checking for an
+                // actual existing job row per role reflects whether anyone
+                // was EVER found, not just this tick's re-check pass.
+                $riderJobExists = AssignJob::where('order_id', $order->id)
+                    ->where('code', OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE)
+                    ->exists();
+                $merchantJobExists = AssignJob::where('order_id', $order->id)
+                    ->where('code', OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE)
+                    ->exists();
+                if ($first_check && $total_riders == 0 && $total_merchants == 0 && !$riderJobExists && !$merchantJobExists) {
 
                     // set to admin pending assign
                     $order->is_pending_assign = true;

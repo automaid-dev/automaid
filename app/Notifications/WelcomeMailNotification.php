@@ -8,7 +8,7 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use App\Models\User;
 
-class WelcomeMailNotification extends Notification implements ShouldQueue
+class WelcomeMailNotification extends Notification
 {
     use Queueable;
 

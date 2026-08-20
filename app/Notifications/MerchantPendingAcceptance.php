@@ -7,7 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class MerchantPendingAcceptance extends Notification implements ShouldQueue
+class MerchantPendingAcceptance extends Notification
 {
     use Queueable;
 

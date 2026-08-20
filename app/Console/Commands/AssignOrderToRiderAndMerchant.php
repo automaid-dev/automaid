@@ -132,7 +132,8 @@ class AssignOrderToRiderAndMerchant extends Command
                 $pending_status = $order->order_statuses;
                 if (count($pending_status) > 0) {
                     foreach ($pending_status as $status) {
-                    
+                    try {
+
                         // has order
                         if ($location && $date && $city_name) {
 
@@ -642,6 +643,28 @@ class AssignOrderToRiderAndMerchant extends Command
                                 }
                             }
                         }
+
+                    } catch (\Throwable $th) {
+                        // Previously the try/catch here wrapped the ENTIRE
+                        // order (all of its statuses together) — so if
+                        // rider matching threw for this order, merchant
+                        // matching for the SAME order never even got a
+                        // chance to run in that tick either, since the
+                        // whole order was abandoned via `continue`. Rider
+                        // and merchant are processed as separate iterations
+                        // of this same status loop, so catching here keeps
+                        // them properly isolated from each other: one
+                        // role's failure can no longer silently block the
+                        // other role's assignment for the same order.
+                        \Log::error('AssignOrderToRiderAndMerchant failed for order status', [
+                            'order_id' => $order->id ?? null,
+                            'status_code' => $status->code ?? null,
+                            'message' => $th->getMessage(),
+                            'file' => $th->getFile(),
+                            'line' => $th->getLine(),
+                        ]);
+                        continue;
+                    }
                         
                         // save is_check_queue (indicator already check the first time)
                         //

@@ -186,6 +186,67 @@ class DiagnoseAssignment extends Command
             $this->line("  '{$cn}'{$exact}{$match}");
         }
 
+        $this->newLine();
+        $this->info("--- Rider match: EXACT query used by the auto-assign command (city_name = '{$city_name}') ---");
+        // Same reasoning as the merchant exact-query section above —
+        // replicated verbatim so a rider match failure shows exactly
+        // why, instead of relying on the looser PHP-level check.
+        $exactRiderQuery = User::role('rider')
+            ->has('rider')
+            ->whereHas('covered_locations', function ($q) use ($city_name) {
+                $q->where('is_active', true);
+                $q->whereHas('city', function ($c) use ($city_name) {
+                    $c->where('name', $city_name);
+                });
+            })
+            ->where('is_duty', true)
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->active();
+        $this->line('SQL: ' . $exactRiderQuery->toRawSql());
+        $exactRiderMatches = $exactRiderQuery->get();
+        if ($exactRiderMatches->isEmpty()) {
+            $this->warn("Exact query returns ZERO riders — this is why the auto-assign command found nothing, regardless of what the looser check above says.");
+        }
+        foreach ($exactRiderMatches as $m) {
+            $this->line("  MATCHED: {$m->name} ({$m->email})");
+        }
+
+        $this->newLine();
+        $this->info('--- Raw notifications table check (ground truth, bypasses the app entirely) ---');
+        // Checks the actual `notifications` table directly for the
+        // rider/merchant owning each code=11/21 job on this order —
+        // this tells us definitively whether the notification was ever
+        // created at all, separate from whether the app displays it,
+        // whether push succeeded, or whether the fix was even deployed
+        // when the job was created (jobs created before a fix landed
+        // won't retroactively get notified).
+        $jobOwners = \App\Models\AssignJob::where('order_id', $order->id)
+            ->whereIn('code', [\App\Models\OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE, \App\Models\OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE])
+            ->with('user')
+            ->get();
+        if ($jobOwners->isEmpty()) {
+            $this->warn('No rider/merchant job exists for this order at all — nothing to check notifications for.');
+        }
+        foreach ($jobOwners as $job) {
+            if (!$job->user) {
+                $this->line("  code={$job->code}: owning user not found (user_id={$job->user_id})");
+                continue;
+            }
+            $recentNotifs = $job->user->notifications()
+                ->where('created_at', '>=', $order->created_at)
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get();
+            $this->line("  {$job->user->name} ({$job->user->email}) — {$recentNotifs->count()} notification(s) since this order was created:");
+            foreach ($recentNotifs as $n) {
+                $data = $n->data;
+                $title = $data['title'] ?? '(no title key)';
+                $message = $data['message'] ?? '(no message key)';
+                $this->line("    [{$n->created_at}] type={$n->type} title=\"{$title}\" message=\"{$message}\"");
+            }
+        }
+
         return 0;
     }
 }

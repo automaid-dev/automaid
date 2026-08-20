@@ -7,7 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class RiderPendingAcceptance extends Notification implements ShouldQueue
+class RiderPendingAcceptance extends Notification
 {
     use Queueable;
 

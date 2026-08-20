@@ -26,6 +26,7 @@ class CustomerNotification extends Model
     const SUBSCRIPTION_CREATED = 'subscription_created';
     const SUBSCRIPTION_CANCELLED = 'subscription_cancelled';
     const NEW_BOOKING = 'new_booking';
+    const RIDER_ACCEPTED = 'rider_accepted';
 
     protected static function booted()
     {

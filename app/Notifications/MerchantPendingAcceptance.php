@@ -64,7 +64,7 @@ class MerchantPendingAcceptance extends Notification implements ShouldQueue
         // the app.
         $data = [
             'title' => 'You’ve got new order',
-            'message' => "You are assigned Order {$this->job->order_id} from customer.",
+            'message' => "You have booking order {$this->job->order_id} to accept.",
         ];
 
         // have device id — also send a push notification

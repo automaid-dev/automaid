@@ -157,6 +157,42 @@ class OrderController extends Controller
             // send pn to customer
             event(new \App\Events\CustomerReadyPickup($order->user, $customer_job));
 
+            // Also write to the customer app's own in-app notification
+            // feed (CustomerNotification / customer_notifications table)
+            // — the customer notification SCREEN reads exclusively from
+            // that table (see Api/Customer/NotificationController),
+            // completely separate from the Laravel Notifiable
+            // `notifications` table used above by CustomerReadyPickup.
+            // Without this, CustomerReadyPickup's email/push still went
+            // out, but nothing ever showed up on the customer's actual
+            // in-app notification list.
+            try {
+                $onesignal = new \App\Services\OneSignalService();
+                $title = 'Rider is on the way';
+                $message = "Rider accepted your order {$order->id} and on the way to pick up your laundry item.";
+                $onesignal->notifyUser(
+                    $order->user,
+                    \App\Models\CustomerNotification::RIDER_ACCEPTED,
+                    $title,
+                    $message,
+                    $message,
+                    $order->id,
+                );
+            } catch (\Throwable $th) {
+                \Log::error('Failed to send customer rider-accepted notification', ['error' => $th->getMessage(), 'order_id' => $order->id]);
+            }
+
+            // notify the merchant this order is coming their way — a
+            // pure heads-up, not tied to their own job's status, so it
+            // doesn't touch $order->merchant / their AssignJob at all.
+            $merchantPendingJob = AssignJob::where([
+                'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
+                'order_id' => $assign->order_id,
+            ])->first();
+            if ($merchantPendingJob && $merchantPendingJob->user) {
+                event(new \App\Events\MerchantRiderOnTheWay($merchantPendingJob->user, $merchantPendingJob));
+            }
+
             // return data after accept order
             $data['assign'] = $assign->load([
                 'user.rider',

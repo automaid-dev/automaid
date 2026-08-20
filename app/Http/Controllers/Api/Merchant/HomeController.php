@@ -88,6 +88,27 @@ class HomeController extends Controller
                     return $shouldShowPending($job)
                         && $job->booking->pickup_date > $todayDate;
                 })->values(),
+
+                // Active bookings — accepted (is_accepted=true) but not
+                // yet at the final delivered stage (code 26 accepted).
+                // Previously the dashboard only ever showed pending
+                // (not-yet-accepted) jobs, so the moment a merchant
+                // accepted a job it vanished from their own dashboard
+                // entirely until they went looking in activity history
+                // — which, on top of that, mixed together completed AND
+                // still-in-progress orders with no way to tell them
+                // apart. One row per order (its furthest-progressed
+                // job, by creation order) so an order mid-flow across
+                // several codes shows once, not once per stage.
+                'active' => $allJobs->where('is_accepted', true)
+                    ->whereNotIn('order_id', $allJobs->filter(function ($job) {
+                        return $job->status->code == \App\Models\OrderStatus::MERCHANT_ORDER_DELIVERED && $job->is_accepted;
+                    })->pluck('order_id')->all())
+                    ->groupBy('order_id')
+                    ->map(function ($jobs) {
+                        return $jobs->sortByDesc('id')->first();
+                    })
+                    ->values(),
             ];
 
             // get total assigned jobs today
@@ -240,6 +261,24 @@ class HomeController extends Controller
                 ->where('is_accepted', true)
                 ->distinct()
                 ->pluck('order_id');
+
+            // Exclude orders still actively in progress — those belong
+            // on the dashboard's new "Active booking" section, not
+            // history. Without this, an order showed in BOTH places
+            // simultaneously the moment it was accepted, with no way
+            // to tell from history alone whether it was actually done.
+            $completedOrEndedOrderIds = \App\Models\AssignJob::where('user_id', $user->id)
+                ->where('code', \App\Models\OrderStatus::MERCHANT_ORDER_DELIVERED)
+                ->where('is_accepted', true)
+                ->distinct()
+                ->pluck('order_id');
+            $orderIds = $orderIds->intersect($completedOrEndedOrderIds->merge(
+                \App\Models\Order::whereIn('id', $orderIds)
+                    ->whereHas('booking', function ($q) {
+                        $q->where('status', \App\Models\Booking::CANCEL);
+                    })
+                    ->pluck('id')
+            ));
 
             $orders = \App\Models\Order::whereIn('id', $orderIds)
                 ->with(['booking', 'delivered'])

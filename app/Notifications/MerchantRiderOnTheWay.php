@@ -7,7 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class RiderPendingAcceptance extends Notification implements ShouldQueue
+class MerchantRiderOnTheWay extends Notification implements ShouldQueue
 {
     use Queueable;
 
@@ -53,18 +53,9 @@ class RiderPendingAcceptance extends Notification implements ShouldQueue
      */
     public function toArray(object $notifiable): array
     {
-        // Build the message first — this must still be saved to the
-        // database notifications table (for the in-app notification
-        // list) even when the rider has no device_id to push to, or
-        // when the OneSignal push itself fails. Previously this whole
-        // block only ran inside "if device_id" AND only returned data
-        // if the push send succeeded — so a rider with no push token
-        // registered yet (or a flaky push) got an empty notification
-        // row, which looks identical to "no notification at all" in
-        // the app.
         $data = [
-            'title' => 'You’ve got new order',
-            'message' => "You have booking order {$this->job->order_id} to accept.",
+            'title' => '🛵 Rider on the way',
+            'message' => "Rider is on the way to send order {$this->job->order_id}.",
         ];
 
         // have device id — also send a push notification

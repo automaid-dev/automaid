@@ -108,7 +108,7 @@ class HomeController extends Controller
                 // further along than it actually is) so an order mid-
                 // flow across several codes shows once, not once per
                 // stage.
-                'active' => $allJobs->where('is_accepted', true)
+                'active' => $allJobs
                     ->whereNotIn('order_id', $allJobs->filter(function ($job) {
                         return $job->status->code == \App\Models\OrderStatus::RIDER_ORDER_DELIVERED && $job->is_accepted;
                     })->pluck('order_id')->all())

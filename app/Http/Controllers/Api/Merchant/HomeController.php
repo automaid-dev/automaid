@@ -100,7 +100,25 @@ class HomeController extends Controller
                 // apart. One row per order (its furthest-progressed
                 // job, by creation order) so an order mid-flow across
                 // several codes shows once, not once per stage.
-                'active' => $allJobs->where('is_accepted', true)
+                // Active bookings — every order this merchant currently
+                // has any open job on, pending or accepted, one row per
+                // order (its single most recent job by creation order).
+                //
+                // Previously this filtered to is_accepted=true BEFORE
+                // picking the latest job, which meant the moment the
+                // NEXT stage's job got created (e.g. code 22, not yet
+                // accepted), it got excluded from consideration here —
+                // leaving the OLD already-accepted code 21 job as the
+                // "latest" shown, whose action label statically reads
+                // "Accept order" for that code regardless of whether
+                // this specific row is actually already accepted. That
+                // produced a stale, misleading label AND, worse, meant
+                // the SAME order displayed twice on the dashboard: once
+                // here (stale) and once in the Today tab (correct,
+                // showing the real current step) — this single list
+                // now replaces both, so there is exactly one place per
+                // order to look, always showing the true current step.
+                'active' => $allJobs
                     ->whereNotIn('order_id', $allJobs->filter(function ($job) {
                         return $job->status->code == \App\Models\OrderStatus::MERCHANT_ORDER_DELIVERED && $job->is_accepted;
                     })->pluck('order_id')->all())

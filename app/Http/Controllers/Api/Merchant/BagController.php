@@ -141,9 +141,29 @@ class BagController extends Controller
             $codes = [OrderStatus::CUSTOMER_WASH_IN_PROGRESS, OrderStatus::MERCHANT_WASH_IN_PROGRESS, OrderStatus::RIDER_AWAITING_WASH_TO_COMPLETE];
             foreach ($codes as $key => $code) {
 
-                // insert order status
-                $new_status = OrderStatus::firstOrCreate(
-                    ['order_id' => $order->id, 'code' => $code, 'is_done' => true, 'done_at' => now()]
+                // Previously this passed is_done/done_at INSIDE the
+                // search criteria, with done_at set to now() — a value
+                // that's different on every single call. That meant
+                // firstOrCreate() could never find its own previously-
+                // created row (the search would never match a past
+                // timestamp), so a double-tap on "Receive bag" (or any
+                // retry) created brand new duplicate OrderStatus rows
+                // for the same order+code every time, which in turn
+                // made the AssignJob::firstOrCreate() below it
+                // duplicate too (its own search includes this row's
+                // id). Since WashController::washComplete requires
+                // exactly 3 matching not-yet-accepted AssignJob rows
+                // (customer/merchant/rider) to proceed, any duplication
+                // here breaks that count and makes "wash completed"
+                // silently refuse to work with "Merchant not receive
+                // bag yet." — even though the bag genuinely was
+                // received. updateOrCreate matches on the stable
+                // identity fields only, then always applies is_done/
+                // done_at on top — whether the row is new or already
+                // existed.
+                $new_status = OrderStatus::updateOrCreate(
+                    ['order_id' => $order->id, 'code' => $code],
+                    ['is_done' => true, 'done_at' => now()]
                 );
 
                 // get assign user id

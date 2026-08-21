@@ -169,8 +169,22 @@ class DeliveryController extends Controller
                 }
 
                 // insert order status
-                $new_status = OrderStatus::firstOrCreate(
-                    ['order_id' => $order->id, 'code' => $code, 'is_done' => true, 'done_at' => now()]
+                // Previously this passed is_done/done_at INSIDE the
+                // search criteria, with done_at set to now() — a value
+                // that's different on every single call. That meant
+                // firstOrCreate() could never find its own previously-
+                // created row (the search would never match a past
+                // timestamp), so every call created a brand new
+                // duplicate OrderStatus row for the same order+code,
+                // which in turn made the AssignJob::firstOrCreate()
+                // below it duplicate too (its own search includes this
+                // row's id). updateOrCreate matches on the stable
+                // identity fields only, then always applies is_done/
+                // done_at on top — whether the row is new or already
+                // existed.
+                $new_status = OrderStatus::updateOrCreate(
+                    ['order_id' => $order->id, 'code' => $code],
+                    ['is_done' => true, 'done_at' => now()]
                 );
 
                 // insert assign job

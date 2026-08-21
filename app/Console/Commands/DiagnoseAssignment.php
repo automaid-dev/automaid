@@ -264,6 +264,37 @@ class DiagnoseAssignment extends Command
             }
         }
 
+        $this->newLine();
+        $this->info('--- washComplete() readiness check (the exact "3 rows" gate merchant\'s "wash completed" button depends on) ---');
+        // WashController::washComplete refuses to proceed unless
+        // EXACTLY 3 not-yet-accepted AssignJob rows exist for this
+        // order — one each for customer (code 03), merchant (23), and
+        // rider (17). A duplicate row for any of these (see the
+        // OrderStatus::firstOrCreate bug fixed this round, which could
+        // have created extras before the fix landed) breaks that exact
+        // count and makes "wash completed" silently fail with
+        // "Merchant not receive bag yet." even when the bag genuinely
+        // was received.
+        $washGateCodes = [
+            \App\Models\OrderStatus::CUSTOMER_WASH_IN_PROGRESS,
+            \App\Models\OrderStatus::RIDER_AWAITING_WASH_TO_COMPLETE,
+            \App\Models\OrderStatus::MERCHANT_WASH_IN_PROGRESS,
+        ];
+        $washGateRows = \App\Models\AssignJob::whereIn('code', $washGateCodes)
+            ->where(['order_id' => $order->id, 'is_accepted' => false])
+            ->get();
+        $this->line("Matching rows found: {$washGateRows->count()} (needs exactly 3 to pass)");
+        foreach ($washGateCodes as $c) {
+            $countForCode = $washGateRows->where('code', $c)->count();
+            $flag = $countForCode > 1 ? ' ← DUPLICATE, this is blocking the gate' : ($countForCode === 0 ? ' ← MISSING, this is blocking the gate' : '');
+            $this->line("  code={$c}: {$countForCode} row(s){$flag}");
+        }
+        if ($washGateRows->count() === 3) {
+            $this->line('VERDICT: gate would currently PASS — washComplete should work.');
+        } else {
+            $this->warn('VERDICT: gate would currently FAIL — this is why "wash completed" isn\'t moving the order forward.');
+        }
+
         return 0;
     }
 }

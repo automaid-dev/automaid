@@ -274,6 +274,33 @@ class DeliveryController extends Controller
             // send pn to customer
             event(new \App\Events\CustomerOrderDelivered($order->user, $customer_job));
 
+            // Also write to the customer app's own in-app notification
+            // feed (CustomerNotification / customer_notifications table)
+            // — same gap as the two earlier rider steps this
+            // conversation: the customer notification SCREEN reads
+            // exclusively from that table (Api/Customer/
+            // NotificationController), completely separate from the
+            // Laravel Notifiable `notifications` table used by the
+            // event above and the completion email already being sent.
+            // Without this, the customer's in-app notification list
+            // stayed frozen at "rider is on the way" for the rest of
+            // the order's life, even though it had actually finished.
+            try {
+                $onesignal2 = new \App\Services\OneSignalService();
+                $title = 'Order delivered';
+                $message = "Rider has delivered your order {$order->id}. Your order is now completed — thank you for using AutoMaid!";
+                $onesignal2->notifyUser(
+                    $order->user,
+                    \App\Models\CustomerNotification::ORDER_DELIVERED,
+                    $title,
+                    $message,
+                    $message,
+                    $order->id,
+                );
+            } catch (\Throwable $th) {
+                \Log::error('Failed to send customer order-delivered notification', ['error' => $th->getMessage(), 'order_id' => $order->id]);
+            }
+
 	        $data['assign'] = $assign;
 	        return response()->json([
 	            'status' => true,

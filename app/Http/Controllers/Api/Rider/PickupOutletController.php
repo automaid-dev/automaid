@@ -133,7 +133,19 @@ class PickupOutletController extends Controller
             foreach ($codes as $key => $code) {
 
                 // set data order status
-                $arr = ['order_id' => $order->id, 'code' => $code];
+                //
+                // Previously the customer branch below built $arr with
+                // is_done/done_at INSIDE it and passed the whole thing
+                // straight to firstOrCreate() — since done_at was set to
+                // now() (a different value every call), firstOrCreate
+                // could never match its own previously-created row and
+                // created a fresh duplicate every time this ran. Same
+                // bug, same fix as DeliveryController/PickupController/
+                // BagController this round: keep the search criteria
+                // (order_id + code) stable, apply is_done/done_at via
+                // updateOrCreate's second argument instead so it always
+                // lands on the SAME row.
+                $extra = [];
 
                 // get assign user id
                 if ($code == OrderStatus::MERCHANT_RIDER_EN_ROUTE_TO_CUSTOMER) {
@@ -143,14 +155,14 @@ class PickupOutletController extends Controller
                     $user_id = $order->user_id;
 
                     // set done for customer
-                    $arr = ['order_id' => $order->id, 'code' => $code, 'is_done' => true, 'done_at' => now()];
+                    $extra = ['is_done' => true, 'done_at' => now()];
                 }
                 else {
                     $user_id = $user->id;
                 }
 
                 // insert order status
-                $new_status = OrderStatus::firstOrCreate($arr);
+                $new_status = OrderStatus::updateOrCreate(['order_id' => $order->id, 'code' => $code], $extra);
 
                 // insert assign job
                 $job = AssignJob::firstOrCreate([
@@ -163,6 +175,32 @@ class PickupOutletController extends Controller
 
             // send pn to customer
             event(new \App\Events\CustomerDeliveryToCustomer($order->user, $job));
+
+            // Also write to the customer app's own in-app notification
+            // feed (CustomerNotification / customer_notifications table)
+            // — same gap as the rider-accept step: the customer
+            // notification SCREEN reads exclusively from that table
+            // (Api/Customer/NotificationController), completely
+            // separate from the Laravel Notifiable `notifications`
+            // table used by the event above. Without this, the customer
+            // only ever saw the earlier "rider is on the way to pick up"
+            // notification and nothing for this later, equally
+            // important step — the actual delivery to their door.
+            try {
+                $onesignal = new \App\Services\OneSignalService();
+                $title = 'Rider is on the way';
+                $message = "Rider is on the way to deliver your order {$order->id}.";
+                $onesignal->notifyUser(
+                    $order->user,
+                    \App\Models\CustomerNotification::RIDER_ON_THE_WAY_TO_DELIVER,
+                    $title,
+                    $message,
+                    $message,
+                    $order->id,
+                );
+            } catch (\Throwable $th) {
+                \Log::error('Failed to send customer delivery-on-the-way notification', ['error' => $th->getMessage(), 'order_id' => $order->id]);
+            }
 
             // set data order
             $data['order'] = $order;

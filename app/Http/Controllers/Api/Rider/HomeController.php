@@ -55,6 +55,17 @@ class HomeController extends Controller
                     'order.user.qrcodes',
                     'order.order_addons.addon',
                     'order.merchant.user.merchant.outlet',
+                    // Lets the rider app tell whether the order has
+                    // actually reached the merchant yet, even while the
+                    // rider's own job is still sitting at code 13
+                    // ("delivery to wash outlet") — that single code
+                    // covers both "still traveling there" and "already
+                    // dropped off, now waiting on the wash" with no
+                    // distinction between them on the rider's own job
+                    // row, so without this the dashboard kept showing
+                    // "Delivering to outlet" indefinitely even once the
+                    // merchant had received the bag and started washing.
+                    'order.merchant_order_statuses',
                     'status',
                     'order.qrcode_users.qrcode',
                 ])

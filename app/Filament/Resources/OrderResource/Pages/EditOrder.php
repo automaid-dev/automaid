@@ -935,12 +935,27 @@ class EditOrder extends EditRecord
         }
 
         // rider status
-        $rider_codes = ['11', '12', '13', '14', '15', '16', '17'];
-        $rider_status = $statuses
-            ->whereIn('code', $rider_codes)
-            ->sortBy('code')
-            ->pluck('desc', 'code')
-            ->toArray();
+        //
+        // Deliberately NOT in pure numeric order — code 17 "awaiting
+        // wash to complete" is a parallel/waiting state that happens
+        // between the rider dropping off at the outlet (13) and picking
+        // the washed items back up (14), even though its numeric value
+        // sorts after everything else. Previously this list was built
+        // from a numerically-sorted $rider_codes and then re-sorted by
+        // ->sortBy('code'), which always pushed 17 to the very end of
+        // the displayed timeline regardless of this array's own order —
+        // showing it after "Order delivered" instead of where it
+        // actually belongs. Building the list by iterating this array
+        // directly (rather than re-sorting by code) preserves the
+        // intended display order exactly.
+        $rider_codes = ['11', '12', '13', '17', '14', '15', '16'];
+        $rider_status_by_code = $statuses->whereIn('code', $rider_codes)->keyBy('code');
+        $rider_status = [];
+        foreach ($rider_codes as $code) {
+            if ($rider_status_by_code->has($code)) {
+                $rider_status[$code] = $rider_status_by_code[$code]->desc;
+            }
+        }
 
         $existingStatuses = OrderStatus::where('order_id', $this->record->id)
             ->whereIn('code', $rider_codes)

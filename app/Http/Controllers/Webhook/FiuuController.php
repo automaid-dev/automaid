@@ -111,10 +111,19 @@ class FiuuController extends Controller
                         'payment',
                         'bag_purchases',
                     ]);
-                    return response()->json([
-                        'status' => true,
-                        'message' => 'Successfully purchase bag and make payment.',
-                        'data' => $data2,
+                    // This route is loaded inside the app's in-app
+                    // webview purely as a redirect target from Fiuu —
+                    // the app doesn't parse its content, only detects
+                    // reaching this URL before checking real order
+                    // status via the API. Previously this returned raw
+                    // JSON, which the webview rendered with its
+                    // built-in JSON viewer (visible to the customer for
+                    // the ~2 seconds before the app auto-dismisses it) —
+                    // a proper confirmation page belongs here instead.
+                    return view('payment.return', [
+                        'success' => true,
+                        'title' => 'Payment successful',
+                        'message' => 'Your bag purchase payment was received. You can return to the app.',
                     ]);
                 }
 
@@ -131,10 +140,10 @@ class FiuuController extends Controller
                         'pickup_location',
                         'customer_order_status.status',
                     ]);
-                    return response()->json([
-                        'status' => true,
-                        'message' => 'Successfully booking and make payment.',
-                        'data' => $data2,
+                    return view('payment.return', [
+                        'success' => true,
+                        'title' => 'Payment successful',
+                        'message' => 'Your booking payment was received. You can return to the app.',
                     ]);
                 }
 
@@ -143,10 +152,10 @@ class FiuuController extends Controller
 
                     // return data
                     $data2['subscription'] = $subscription->load(['order', 'bags', 'payment']);
-                    return response()->json([
-                        'status' => true,
-                        'message' => 'Successfully subscribe and make payment.',
-                        'data' => $data2,
+                    return view('payment.return', [
+                        'success' => true,
+                        'title' => 'Payment successful',
+                        'message' => 'Your subscription payment was received. You can return to the app.',
                     ]);
                 }
 
@@ -156,33 +165,36 @@ class FiuuController extends Controller
 
                     // return data
                     $data2['subscription'] = $subscription->load(['order', 'bags', 'payment']);
-                    return response()->json([
-                        'status' => true,
-                        'message' => 'Successfully subscribe and make payment.',
-                        'data' => $data2,
+                    return view('payment.return', [
+                        'success' => true,
+                        'title' => 'Payment successful',
+                        'message' => 'Your card details were updated. You can return to the app.',
                     ]);
                 }
 
                 // redirect to result page
-                return response()->json([
-                    'status' => true,
-                    'message' => 'Payment successfully made. Thank you!',
+                return view('payment.return', [
+                    'success' => true,
+                    'title' => 'Payment successful',
+                    'message' => 'Payment successfully made. Thank you! You can return to the app.',
                 ]);
             }
 
             // status failed
             else {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Payment Failed.',
+                return view('payment.return', [
+                    'success' => false,
+                    'title' => 'Payment failed',
+                    'message' => 'Your payment could not be completed. You can return to the app and try again.',
                 ]);
             }
 
         }
         else {
-            return response()->json([
-                'status' => false,
-                'message' => 'Payment failed.',
+            return view('payment.return', [
+                'success' => false,
+                'title' => 'Payment failed',
+                'message' => 'Your payment could not be verified. You can return to the app and try again.',
             ]);
         }
     }

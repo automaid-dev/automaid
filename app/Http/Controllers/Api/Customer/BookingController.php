@@ -134,7 +134,9 @@ class BookingController extends Controller
 
             // check input
             $validate = Validator::make($request->all(), [           
-                'pickup_bag_quantity' => 'required|numeric|min:1',                         
+                'pickup_bag_quantity' => 'required|numeric|min:1',   
+                'addon_ids' => 'nullable|array',
+                'addon_ids.*' => 'integer|exists:add_ons,id',
             ]);
             if ($validate->fails()) {
                 return response()->json([
@@ -159,12 +161,53 @@ class BookingController extends Controller
             // subscription; the free-1st-bag benefit is wash-only.
             $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
 
+            // Itemized add-ons — previously this endpoint (the one the
+            // checkout/order-summary screen actually calls to build its
+            // price breakdown) never accepted or returned add-on
+            // details at all, only the plain wash/delivery numbers. The
+            // app was left to track and sum add-on prices entirely on
+            // its own from a separately-fetched list, with nothing from
+            // this endpoint to build a proper itemized summary from —
+            // so the screen could only ever show a final lump total.
+            // This mirrors exactly what the email invoice already does
+            // (each add-on gets its own named line with its own price),
+            // just available in the one call the summary screen needs.
+            $selected_addons = [];
+            $total_addon_charge = 0;
+            if ($request->filled('addon_ids')) {
+                $addons = \App\Models\AddOn::whereIn('id', $request->addon_ids)->get();
+                foreach ($addons as $addon) {
+                    $selected_addons[] = [
+                        'id' => $addon->id,
+                        'title' => $addon->title,
+                        'price' => (float) $addon->price,
+                    ];
+                    $total_addon_charge += (float) $addon->price;
+                }
+            }
+
+            // Addon discount — same calculation checkAddonDiscount()
+            // already does, folded in here so the summary screen gets
+            // the fully itemized total in one call instead of having
+            // to stitch two separate endpoint responses together.
+            $addon_discount = 0;
+            if ($total_addon_charge > 0) {
+                $discount_percent = $setting->discount_percent;
+                $discount_limit = $setting->discount_limit;
+                $discount_addon_charge = $total_addon_charge * $discount_percent / 100;
+                $addon_discount = ($discount_addon_charge > 0 && $discount_addon_charge <= $discount_limit)
+                    ? $discount_addon_charge
+                    : $discount_limit;
+            }
+
             // SST — admin-configurable (Settings > sst_percent), applied
-            // to washing + delivery here for the preview. schedule()
-            // recomputes this the same way server-side rather than
-            // trusting whatever the client sends back.
+            // to washing + delivery + add-ons here for the preview.
+            // schedule() recomputes this the same way server-side rather
+            // than trusting whatever the client sends back.
             $sst_percent = $setting->sst_percent ?? 0;
-            $tax_charge = round(($washing_charge + $delivery_charge) * ($sst_percent / 100), 2);
+            $tax_charge = round(($washing_charge + $delivery_charge + $total_addon_charge - $addon_discount) * ($sst_percent / 100), 2);
+
+            $grand_total = round($washing_charge + $delivery_charge + $total_addon_charge - $addon_discount + $tax_charge, 2);
 
             return response()->json([
                 'status' => true,
@@ -172,8 +215,12 @@ class BookingController extends Controller
                 'data' => [
                     'delivery_change' => $delivery_charge, 
                     'washing_charge' => $washing_charge,
+                    'addons' => $selected_addons,
+                    'total_addon_charge' => (float) number_format($total_addon_charge, 2, '.', ''),
+                    'addon_discount' => (float) number_format($addon_discount, 2, '.', ''),
                     'sst_percent' => $sst_percent,
                     'tax_charge' => $tax_charge,
+                    'grand_total' => $grand_total,
                 ],
             ]);
 

@@ -151,23 +151,29 @@ class PickupController extends Controller
 
             // insert order status
             // 13 - delivery to wash outlet
+            //
+            // Deliberately left NOT done here — this action only means
+            // the rider has picked up and is now traveling to the
+            // outlet, not that they've actually arrived and handed the
+            // bag over. Marking it done immediately made the rider's
+            // own tracking timeline show this step as complete (blue
+            // tick) the moment they left the customer's address, well
+            // before the bag was ever actually delivered — confusing
+            // since there was no visual difference between "en route"
+            // and "delivered." BagController::bagReceive already marks
+            // this exact status done at the real moment of completion
+            // (when the merchant confirms receiving the bag), so this
+            // just creates the row in its correct pending state and
+            // lets that later action be the one that flips it.
             $code = OrderStatus::RIDER_DELIVERY_TO_WASH_OUTLET;
 
-            // insert order status
-            // Previously this passed is_done/done_at INSIDE the search
-            // criteria, with done_at set to now() — a value that's
-            // different on every single call. That meant firstOrCreate()
-            // could never find its own previously-created row (the
-            // search would never match a past timestamp), so every call
-            // created a brand new duplicate OrderStatus row for the same
-            // order+code, which in turn made the AssignJob::firstOrCreate()
-            // below it duplicate too (its own search includes this
-            // row's id). updateOrCreate matches on the stable identity
-            // fields only, then always applies is_done/done_at on top —
-            // whether the row is new or already existed.
+            // insert order status (create if missing, without touching
+            // is_done — updateOrCreate's empty second argument means an
+            // already-existing row's done state is left untouched too,
+            // matching the "don't mark this done here" intent above).
             $new_status = OrderStatus::updateOrCreate(
                 ['order_id' => $order->id, 'code' => $code],
-                ['is_done' => true, 'done_at' => now()]
+                []
             );
 
             // insert assign job

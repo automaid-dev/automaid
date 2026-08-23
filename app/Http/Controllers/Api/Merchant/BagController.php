@@ -157,13 +157,24 @@ class BagController extends Controller
                 // here breaks that count and makes "wash completed"
                 // silently refuse to work with "Merchant not receive
                 // bag yet." — even though the bag genuinely was
-                // received. updateOrCreate matches on the stable
-                // identity fields only, then always applies is_done/
-                // done_at on top — whether the row is new or already
-                // existed.
+                // received.
+                //
+                // Also deliberately NOT marking these done here anymore
+                // (updateOrCreate's second argument is now empty) — all
+                // three of these codes represent wash IN PROGRESS, not
+                // complete, so marking them done the moment the bag is
+                // merely received showed a premature blue tick on both
+                // the rider's and merchant's tracking timelines for a
+                // wash that hadn't actually finished yet.
+                // WashController::washComplete already correctly marks
+                // these exact three rows done later, at the real moment
+                // of completion (its own $status_prev loop above uses
+                // the identical code list) — this just needs to create
+                // them in their proper pending state and let that later
+                // action be the one that flips them.
                 $new_status = OrderStatus::updateOrCreate(
                     ['order_id' => $order->id, 'code' => $code],
-                    ['is_done' => true, 'done_at' => now()]
+                    []
                 );
 
                 // get assign user id

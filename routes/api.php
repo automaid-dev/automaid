@@ -81,6 +81,8 @@ Route::middleware('auth:sanctum')->group( function () {
 	Route::post('/notification/read_all', [NotificationController::class, 'read_all']);
 	Route::post('/notification/delete', [NotificationController::class, 'delete']);
 
+	Route::post('/banners', [\App\Http\Controllers\Api\BannerController::class, 'index']);
+
 	// role customer
 	Route::group([
 	    'prefix' => 'customer',

@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Setting;
 use App\Models\OrderStepPhoto;
+use App\Models\Booking;
+use App\Models\Banner;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 
@@ -71,6 +73,52 @@ class PublicDocumentController extends Controller
         return response($contents, 200, [
             'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=3600',
+        ]);
+    }
+
+    /**
+     * Serves the customer's pickup-handoff photo (e.g. laundry left at
+     * a hotel lobby) — same S3 Block Public Access reasoning as
+     * stepPhoto() above.
+     */
+    public function pickupPhoto(string $hashslug): Response
+    {
+        $booking = Booking::where('hashslug', $hashslug)->first();
+
+        if (!$booking || !$booking->pickup_photo_path || !Storage::disk('s3')->exists($booking->pickup_photo_path)) {
+            abort(404, 'Photo not found.');
+        }
+
+        $contents = Storage::disk('s3')->get($booking->pickup_photo_path);
+        $mime = Storage::disk('s3')->mimeType($booking->pickup_photo_path) ?? 'image/jpeg';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=3600',
+        ]);
+    }
+
+    /**
+     * Serves a dashboard promotional banner image — same S3 Block
+     * Public Access reasoning as stepPhoto()/pickupPhoto() above.
+     */
+    public function bannerImage(string $hashslug): Response
+    {
+        $banner = Banner::where('hashslug', $hashslug)->first();
+
+        if (!$banner || !$banner->image_path || !Storage::disk('s3')->exists($banner->image_path)) {
+            abort(404, 'Image not found.');
+        }
+
+        $contents = Storage::disk('s3')->get($banner->image_path);
+        $mime = Storage::disk('s3')->mimeType($banner->image_path) ?? 'image/jpeg';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            // Banners change far less often than step/pickup photos and
+            // are shown to every user on every dashboard load — a
+            // longer cache window meaningfully cuts repeat S3 fetches.
+            'Cache-Control' => 'public, max-age=86400',
         ]);
     }
 }

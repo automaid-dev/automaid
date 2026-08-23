@@ -49,6 +49,10 @@ Route::get('/documents/terms-conditions', [\App\Http\Controllers\PublicDocumentC
 // restriction.
 Route::get('/documents/step-photo/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'stepPhoto'])
     ->name('documents.step-photo');
+Route::get('/documents/pickup-photo/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'pickupPhoto'])
+    ->name('documents.pickup-photo');
+Route::get('/documents/banner-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'bannerImage'])
+    ->name('documents.banner-image');
 
 // Traditional (non-Livewire) file upload for admin settings — see
 // SettingUploadController's doc comment for why this exists: Filament's

@@ -276,6 +276,15 @@ class Order extends Model implements Auditable
     }
 
     /**
+     * [commission_transactions description]
+     * @return [type] [description]
+     */
+    public function commission_transactions()
+    {
+        return $this->hasMany('App\Models\CommissionTransaction', 'order_id');
+    }
+
+    /**
      * [merchant_order_statuses description]
      * @return [type] [description]
      */

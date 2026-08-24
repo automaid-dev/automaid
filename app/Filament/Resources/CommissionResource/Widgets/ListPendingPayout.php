@@ -64,12 +64,21 @@ class ListPendingPayout extends BaseWidget
                 TextColumn::make('total_commission') // was amount
                     ->label('Amount (RM)'),
             ])
-            ->recordUrl(fn ($record) => url("/commissions/{$record->id}/view"))
+            // Previously these built raw URLs via url("/commissions/{id}/view"),
+            // which omits this Filament panel's own path prefix
+            // ('admin', configured in AdminPanelProvider). That produced
+            // a link to /commissions/{id}/view instead of the real
+            // /admin/commissions/{id}/view, 404ing every time. Using
+            // CommissionResource::getUrl() (already correctly done in
+            // the sibling ListCommissionPaid widget) generates the URL
+            // through Filament itself, so it always includes whatever
+            // panel prefix is actually configured.
+            ->recordUrl(fn ($record) => CommissionResource::getUrl('view', ['record' => $record]))
             ->actions([
                 Action::make('edit')
                     ->label(false)
                     ->icon('heroicon-o-eye')
-                    ->url(fn($record) => url("/commissions/{$record->id}/view"))
+                    ->url(fn($record) => CommissionResource::getUrl('view', ['record' => $record]))
                     ->color('primary'),
             ])
             ->filters([

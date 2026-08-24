@@ -32,6 +32,14 @@ class ProfileController extends Controller
                 'activities.order_complete.order', 
                 'activities.order.booking', 
                 'activities.order.qrcode_users.qrcode', 
+                // Scoped to this user's own Commission record so a
+                // merchant/rider only ever sees their own earnings per
+                // order, never another party's cut of the same order.
+                'activities.order.commission_transactions' => function ($q) use ($user) {
+                    $q->whereHas('commission', function ($cq) use ($user) {
+                        $cq->where('user_id', $user->id);
+                    });
+                },
                 'wallet.transactions', 
                 'rider',
                 'tickets',

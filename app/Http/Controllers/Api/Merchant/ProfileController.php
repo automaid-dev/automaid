@@ -31,7 +31,15 @@ class ProfileController extends Controller
                 ]);  
             }            
             $data['user'] = $user->load([
-                'activities.order_complete.order.booking',                
+                'activities.order_complete.order.booking',
+                // Scoped to this user's own Commission record so a
+                // merchant/rider only ever sees their own earnings per
+                // order, never another party's cut of the same order.
+                'activities.order.commission_transactions' => function ($q) use ($user) {
+                    $q->whereHas('commission', function ($cq) use ($user) {
+                        $cq->where('user_id', $user->id);
+                    });
+                },
                 'wallet.transactions', 
                 'merchant',
                 'tickets',

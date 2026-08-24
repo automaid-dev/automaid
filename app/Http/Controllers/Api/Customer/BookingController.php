@@ -448,8 +448,18 @@ class BookingController extends Controller
                 'delivery_charge' => 'required',   
                 'washing_charge' => 'required',
                 'qrcodes' => 'required',   
+                // Mandatory pickup handoff photo + note — lets the
+                // rider see exactly what/where to collect without
+                // needing to contact the customer, which matters most
+                // for hotel-lobby-style drop-offs where the customer
+                // isn't there in person to hand the bag over directly.
+                'pickup_photo' => 'required|image|max:10240',
+                'pickup_note' => 'required|string|max:1000',
             ], [
                 'qrcodes.required' => 'Please select at least one QR code.',
+                'pickup_photo.required' => 'Please take a photo of where you\'re leaving your laundry.',
+                'pickup_photo.image' => 'Pickup photo must be a valid image.',
+                'pickup_note.required' => 'Please add a short note for the rider (e.g. where you left the laundry).',
             ]);
             if ($validate->fails()) {
                 return response()->json([
@@ -458,6 +468,11 @@ class BookingController extends Controller
                     'errors' => $validate->errors()
                 ]);
             }
+
+            // upload pickup handoff photo — stored once at booking
+            // time, unlike the rider/merchant OrderStepPhoto rows which
+            // get created per-step as the order progresses.
+            $pickup_photo_path = $request->file('pickup_photo')->store('bookings', 's3');
 
             // get setting info
             // ----------------
@@ -837,6 +852,8 @@ class BookingController extends Controller
                     'pickup_end_time' => $request->pickup_end_time ?? null,
                     'pickup_bag_quantity' => $request->pickup_bag_quantity ?? 1,
                     'is_folding' => $request->is_folding ?? 1,
+                    'pickup_photo_path' => $pickup_photo_path,
+                    'pickup_note' => $request->pickup_note,
                     'washing_charge' => $washing_charge ?? 0,
                     'addon_charge' => $addon_charge ?? 0,
                     'discount' => $discount ?? 0,
@@ -862,6 +879,8 @@ class BookingController extends Controller
                         'pickup_end_time' => $request->pickup_end_time ?? null,
                         'pickup_bag_quantity' => $request->pickup_bag_quantity ?? 1,
                         'is_folding' => $request->is_folding ?? 1,
+                        'pickup_photo_path' => $pickup_photo_path,
+                        'pickup_note' => $request->pickup_note,
                         'washing_charge' => $washing_charge ?? 0,
                         'addon_charge' => $addon_charge ?? 0,
                         'discount' => $discount ?? 0,
@@ -1246,9 +1265,11 @@ class BookingController extends Controller
             // get insurance fee
             $setting = Setting::find(1);
             $insurance_fee = $setting->insurance_fee;
+            $insurance_coverage = $setting->insurance_coverage;
 
             // display insurance fee
             $data['insurance_fee'] = (float) number_format($insurance_fee, 2, '.', '');
+            $data['insurance_coverage'] = (float) number_format($insurance_coverage ?? 0, 2, '.', '');
             return response()->json([
                 'status' => true,
                 'data' => $data,

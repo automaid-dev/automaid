@@ -902,10 +902,37 @@ class EditOrder extends EditRecord
             ->keyBy('code');
 
         $customerPlaceholders = [];
+        // Fuller "what's actually happening" copy for each step —
+        // mirrors exactly what was added to the customer/rider/merchant
+        // apps' own tracking screens, so admin sees the same
+        // explanations rather than just the short status title.
+        $statusDescriptions = [
+            // Customer
+            '01' => 'Rider is on the way to pick up your laundry. Have your laundry bag packed and ready',
+            '02' => 'Rider is delivering your laundry to outlet. Your items are safely on the move.',
+            '03' => 'Your laundry is being washed and processed at the facility. Care instructions are being followed.',
+            '04' => 'Rider is en route to the drop facility. Ensure someone is available to receive the package.',
+            '05' => "Your booking is completed. Rate us and we'd love to hear your feedback.",
+            // Rider
+            '11' => 'You have a new booking request. Tap "Accept" to confirm the job.',
+            '12' => 'Order accepted. Head to customer location. Drive to customer, collect laundry, and verify bag tag.',
+            '13' => 'Laundry collected. En route to the wash facility. Deliver bag to facility staff and ask the staff to tap "Receive bag".',
+            '17' => 'Wash in progress at facility. Stand by or accept other nearby tasks while wash completes.',
+            '14' => 'Clean laundry is packed and ready for return. Collect packed order from outlet and confirm bag ID.',
+            '15' => "En route to customer's delivery address. Drive to customer location and notify them on arrival.",
+            '16' => 'Order delivered to customer. Hand over laundry, confirm drop-off, and close job.',
+            // Merchant
+            '21' => 'New order incoming from platform. Tap "Accept Order" to confirm facility capacity.',
+            '22' => "Rider is en route with customer's dirty laundry. Prepare intake bay and intake tags.",
+            '23' => 'Laundry received and checked in. Sort, wash, dry, fold, and quality-check items.',
+            '24' => 'Order packed and ready for outbound rider. Stage bagged laundry in pickup area and mark "Ready."',
+            '25' => 'Rider collected package and heading to customer. Hand over order to rider and log handover ID.',
+            '26' => 'Order successfully delivered to customer. Archive order and automatically close job.',
+        ];
         foreach ($customer_status as $code => $desc) {
             $isDone = $existingStatuses->has($code);
             $updatedAt = $isDone
-                ? $existingStatuses[$code]->done_at->format('d M Y, h:i A')
+                ? 'Completed on: ' . $existingStatuses[$code]->done_at->format('d M Y, h:i A')
                 : 'Pending';
 
             $icon = $isDone
@@ -924,9 +951,13 @@ class EditOrder extends EditRecord
                 Placeholder::make("customer_desc_{$code}")
                     ->label(false)
                     ->content(new HtmlString(
-                        '<div class="flex items-center space-x-2">'
+                        '<div class="flex items-start space-x-2">'
                         . $icon .
-                        '&nbsp;<span>' . e($desc) . '</span></div>'
+                        '&nbsp;<div><span>' . e($desc) . '</span>'
+                        . (isset($statusDescriptions[$code])
+                            ? '<br><span class="text-xs text-gray-500">' . e($statusDescriptions[$code]) . '</span>'
+                            : '')
+                        . '</div></div>'
                     )),
                 Placeholder::make("customer_status_{$code}")
                     ->label(false)
@@ -968,7 +999,7 @@ class EditOrder extends EditRecord
         foreach ($rider_status as $code => $desc) {
             $isDone = $existingStatuses->has($code);
             $updatedAt = $isDone
-                ? $existingStatuses[$code]->done_at->format('d M Y, h:i A')
+                ? 'Completed on: ' . $existingStatuses[$code]->done_at->format('d M Y, h:i A')
                 : 'Pending';
 
             $icon = $isDone
@@ -987,9 +1018,13 @@ class EditOrder extends EditRecord
                 Placeholder::make("rider_desc_{$code}")
                     ->label(false)
                     ->content(new HtmlString(
-                        '<div class="flex items-center space-x-2">'
+                        '<div class="flex items-start space-x-2">'
                         . $icon .
-                        '&nbsp;<span>' . e($desc) . '</span></div>'
+                        '&nbsp;<div><span>' . e($desc) . '</span>'
+                        . (isset($statusDescriptions[$code])
+                            ? '<br><span class="text-xs text-gray-500">' . e($statusDescriptions[$code]) . '</span>'
+                            : '')
+                        . '</div></div>'
                     )),
                 Placeholder::make("rider_status_{$code}")
                     ->label(false)
@@ -1016,7 +1051,7 @@ class EditOrder extends EditRecord
         foreach ($merchant_status as $code => $desc) {
             $isDone = $existingStatuses->has($code);
             $updatedAt = $isDone
-                ? $existingStatuses[$code]->done_at->format('d M Y, h:i A')
+                ? 'Completed on: ' . $existingStatuses[$code]->done_at->format('d M Y, h:i A')
                 : 'Pending';
 
             $icon = $isDone
@@ -1035,9 +1070,13 @@ class EditOrder extends EditRecord
                 Placeholder::make("merchant_desc_{$code}")
                     ->label(false)
                     ->content(new HtmlString(
-                        '<div class="flex items-center space-x-2">'
+                        '<div class="flex items-start space-x-2">'
                         . $icon .
-                        '&nbsp;<span>' . e($desc) . '</span></div>'
+                        '&nbsp;<div><span>' . e($desc) . '</span>'
+                        . (isset($statusDescriptions[$code])
+                            ? '<br><span class="text-xs text-gray-500">' . e($statusDescriptions[$code]) . '</span>'
+                            : '')
+                        . '</div></div>'
                     )),
                 Placeholder::make("merchant_status_{$code}")
                     ->label(false)

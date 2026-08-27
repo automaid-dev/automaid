@@ -51,12 +51,16 @@ class Ticket extends Model implements Auditable
     }
 
     /**
-     * [getImageUrlAttribute description]
-     * @return [type] [description]
+     * Proxied through PublicDocumentController rather than a raw S3
+     * URL — same reasoning as OrderStepPhoto::image_url and
+     * Booking::pickup_photo_url: this S3 bucket has Block Public
+     * Access / ACLs disabled (AWS's current default), so a direct S3
+     * URL returns AccessDenied regardless of upload visibility
+     * settings.
      */
     public function getImageUrlAttribute()
     {
-        return $this->image ? Storage::disk('s3')->url($this->image) : null;
+        return $this->image ? route('documents.ticket-image', $this->hashslug) : null;
     }
 
     /**

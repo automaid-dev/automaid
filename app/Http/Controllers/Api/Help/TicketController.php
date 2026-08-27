@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Mail\NewSupportTicketEmail;
 use App\Models\Order;
 use App\Models\Ticket;
+use App\Models\TicketReply;
 use App\Models\User;
 use App\Services\OneSignalService;
 use Illuminate\Http\Request;
@@ -158,6 +159,90 @@ class TicketController extends Controller
             return response()->json([
                 'status' => true,
                 'message' => 'Ticket successfully added.',
+                'data' => $data,
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
+
+    /**
+     * Lets the ticket's own owner (or admin, via the Filament widget's
+     * own separate path) post a new message on an existing ticket —
+     * this is what makes it a genuine back-and-forth chat rather than
+     * a one-shot complaint form. Previously this endpoint didn't exist
+     * at all; index()/detail()/store()/orderLists() covered creating
+     * and viewing tickets, but nothing let the customer actually reply
+     * once a ticket was open.
+     *
+     * @param  Request $request [description]
+     * @return [type]           [description]
+     */
+    public function reply(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $validate = Validator::make($request->all(), [
+                'ticket_id' => 'required',
+                'description' => 'required|string',
+            ]);
+            if ($validate->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'validation error',
+                    'errors' => $validate->errors()
+                ]);
+            }
+
+            $ticket = Ticket::find($request->ticket_id);
+            if (!$ticket) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Record not found.',
+                ]);
+            }
+
+            // Only the ticket's own owner may reply through this
+            // endpoint — admin replies go through the separate
+            // Filament widget, which isn't gated by ownership since
+            // any staff member can respond to any ticket.
+            if ($ticket->user_id != $user->id) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'You are not authorized to reply to this ticket.',
+                ]);
+            }
+
+            $reply = new TicketReply();
+            $reply->ticket_id = $ticket->id;
+            $reply->description = $request->description;
+            $reply->created_by = $user->id;
+            $reply->save();
+
+            // Reopen a resolved/closed ticket — a new message from the
+            // customer means the issue isn't actually settled from
+            // their side, regardless of what state admin last left it
+            // in.
+            if ($ticket->status !== Ticket::OPEN) {
+                $ticket->status = Ticket::OPEN;
+                $ticket->save();
+            }
+
+            $ticket->load(['order', 'user', 'replies']);
+            $data['ticket'] = $ticket;
+            return response()->json([
+                'status' => true,
+                'message' => 'Reply successfully added.',
                 'data' => $data,
             ]);
         } catch (\Throwable $th) {

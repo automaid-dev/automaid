@@ -6,6 +6,7 @@ use App\Models\Setting;
 use App\Models\OrderStepPhoto;
 use App\Models\Booking;
 use App\Models\Banner;
+use App\Models\Ticket;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 
@@ -119,6 +120,27 @@ class PublicDocumentController extends Controller
             // are shown to every user on every dashboard load — a
             // longer cache window meaningfully cuts repeat S3 fetches.
             'Cache-Control' => 'public, max-age=86400',
+        ]);
+    }
+
+    /**
+     * Serves a support ticket's attached photo — same S3 Block Public
+     * Access reasoning as the other proxy methods above.
+     */
+    public function ticketImage(string $hashslug): Response
+    {
+        $ticket = Ticket::where('hashslug', $hashslug)->first();
+
+        if (!$ticket || !$ticket->image || !Storage::disk('s3')->exists($ticket->image)) {
+            abort(404, 'Image not found.');
+        }
+
+        $contents = Storage::disk('s3')->get($ticket->image);
+        $mime = Storage::disk('s3')->mimeType($ticket->image) ?? 'image/jpeg';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=3600',
         ]);
     }
 }

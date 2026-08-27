@@ -15,11 +15,23 @@ class NotificationController extends Controller
     public function index(Request $request)
     {
         try {
+            // Previously returned the notifications list directly under
+            // `data`, with no unread count at all — the merchantrider
+            // app's bell icon had a fully-built badge (see
+            // DashboardBanner) that was simply never given a real
+            // number to show, since nothing here provided one. The
+            // customer app's own separate notification system already
+            // returns an `unread_count` this same way, so this matches
+            // that existing convention rather than introducing a new one.
             $notifications = auth()->user()->notifications;
+            $unreadCount = auth()->user()->unreadNotifications->count();
             return response()->json([
                 'status' => true,
                 'message' => 'Notifications retrieved successfully',
-                'data' => $notifications
+                'data' => [
+                    'notifications' => $notifications,
+                    'unread_count' => $unreadCount,
+                ],
             ], 200);
         } catch (\Throwable $th) {
             return response()->json([

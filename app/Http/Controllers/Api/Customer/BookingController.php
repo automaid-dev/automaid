@@ -447,7 +447,13 @@ class BookingController extends Controller
                 'pickup_end_time' => 'required', 
                 'delivery_charge' => 'required',   
                 'washing_charge' => 'required',
-                'qrcodes' => 'required',   
+                // Bag QR-code tagging isn't part of the physical
+                // pickup/wash/delivery flow yet, so this is no longer
+                // required — the app doesn't ask the customer to pick
+                // one at all, and the backend already handles a
+                // missing/empty value gracefully further down (see the
+                // `filled('qrcodes')` / `!empty($qrcodes)` checks).
+                'qrcodes' => 'nullable',   
                 // Mandatory pickup handoff photo + note — lets the
                 // rider see exactly what/where to collect without
                 // needing to contact the customer, which matters most
@@ -456,7 +462,6 @@ class BookingController extends Controller
                 'pickup_photo' => 'required|image|max:10240',
                 'pickup_note' => 'required|string|max:1000',
             ], [
-                'qrcodes.required' => 'Please select at least one QR code.',
                 'pickup_photo.required' => 'Please take a photo of where you\'re leaving your laundry.',
                 'pickup_photo.image' => 'Pickup photo must be a valid image.',
                 'pickup_note.required' => 'Please add a short note for the rider (e.g. where you left the laundry).',

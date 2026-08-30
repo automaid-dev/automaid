@@ -410,12 +410,31 @@ class DeliveryController extends Controller
         }
 
         // calculate commission
-        $commission = $total * ($commissionRate / $limitCommission); // 30 * (15 / 10)
+        //
+        // Previously this was `$total * ($commissionRate / $limitCommission)`
+        // — dividing the percentage RATE by the RM LIMIT, which is not
+        // a percentage calculation at all (e.g. a 15% rate against a
+        // RM10 limit computed as total * 1.5, effectively a 150%
+        // commission). The correct calculation is simply the rate as a
+        // percentage of the order total.
+        $commission = $total * ($commissionRate / 100);
 
-        // check conditions
+        // Floor — never below the configured minimum, regardless of
+        // how small the order total (or its percentage-based
+        // commission) is. This also covers the RM0-order case the
+        // admin setting's own helper text describes.
         if ($total == 0 || $commission < $minCommission) {
             $commission = $minCommission;
         }
+
+        // Ceiling — never above the configured per-order limit. This
+        // check didn't exist at all before, so a high-value order
+        // could pay out an uncapped commission regardless of whatever
+        // limit was configured in Settings.
+        if ($commission > $limitCommission) {
+            $commission = $limitCommission;
+        }
+
         return $commission;
     }
 

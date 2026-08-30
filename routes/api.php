@@ -74,6 +74,7 @@ Route::middleware('auth:sanctum')->group( function () {
 	Route::post('/help/ticket/detail', [TicketController::class, 'detail']);
 	Route::post('/help/ticket/order/lists', [TicketController::class, 'orderLists']);
 	Route::post('/help/ticket/store', [TicketController::class, 'store']);
+	Route::post('/help/ticket/reply', [TicketController::class, 'reply']);
 
 	Route::post('/notification/index', [NotificationController::class, 'index']);
 	Route::post('/notification/unread', [NotificationController::class, 'unread']);
@@ -89,6 +90,10 @@ Route::middleware('auth:sanctum')->group( function () {
 	    'middleware' => ['role:customer']
 	], function () {
 		Route::post('/home', [\App\Http\Controllers\Api\Customer\HomeController::class, 'home']);
+
+		// service coverage check + waiting list
+		Route::post('/coverage/check', [\App\Http\Controllers\Api\Customer\CoverageController::class, 'check']);
+		Route::post('/coverage/waiting-list', [\App\Http\Controllers\Api\Customer\CoverageController::class, 'joinWaitingList']);
 
 		// announcements
 		Route::post('/home/announcements', [\App\Http\Controllers\Api\Customer\AnnouncementController::class, 'announcements']);

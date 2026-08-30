@@ -48,4 +48,9 @@ class State extends Model implements Auditable
     {
         return $this->hasMany('App\Models\City', 'state_id', 'id');
     }
+
+    public function scopeServiceCovered($query)
+    {
+        return $query->where('is_service_covered', true);
+    }
 }

@@ -21,6 +21,7 @@ class WaitingList extends Model implements Auditable
         'phone',
         'state',
         'city',
+        'postcode',
     ];
 
     const ACTIVE = 'active';

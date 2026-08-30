@@ -39,4 +39,9 @@ class City extends Model implements Auditable
     {
         return $this->belongsTo('App\Models\State');
     }
+
+    public function scopeServiceCovered($query)
+    {
+        return $query->where('is_service_covered', true);
+    }
 }

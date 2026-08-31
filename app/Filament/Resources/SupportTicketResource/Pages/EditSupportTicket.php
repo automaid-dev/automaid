@@ -236,7 +236,7 @@ class EditSupportTicket extends EditRecord
                                             Placeholder::make('label_ticket_no')->label(false)->content('Ticket No'),
                                             Placeholder::make('ticket_no')->label(false)->content(fn ($record) => $record->series_no ?? '-')->extraAttributes(['class' => 'text-right']),
                                             Placeholder::make('label_order_id')->label(false)->content('Order ID'),
-                                            Placeholder::make('order_type')->label(false)->content(fn ($record) => $record->order?->series_no ?? '-')->extraAttributes(['class' => 'text-right']),
+                                            Placeholder::make('order_type')->label(false)->content(fn ($record) => $record->order?->id ?? '-')->extraAttributes(['class' => 'text-right']),
                                             Placeholder::make('label_customer')->label(false)->content('Customer'),
                                             Placeholder::make('grand_total')->label(false)->content(fn ($record) => $record->user?->name ?? '-')->extraAttributes(['class' => 'text-right']),
                                             Placeholder::make('label_issue_type')->label(false)->content('Issue Type'),

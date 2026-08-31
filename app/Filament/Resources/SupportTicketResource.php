@@ -55,11 +55,11 @@ class SupportTicketResource extends Resource
                 TextColumn::make('series_no')
                     ->label('Ticket No') 
                     ->sortable(), 
-                TextColumn::make('order.series_no')
+                TextColumn::make('order.id')
                     ->label('Order ID')
                     ->getStateUsing(function ($record) {
                         return $record->order
-                            ? $record->order->series_no
+                            ? $record->order->id
                             : '-';
                     }) 
                     ->sortable(), 

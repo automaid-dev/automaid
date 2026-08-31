@@ -53,6 +53,8 @@ Route::get('/documents/pickup-photo/{hashslug}', [\App\Http\Controllers\PublicDo
     ->name('documents.pickup-photo');
 Route::get('/documents/banner-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'bannerImage'])
     ->name('documents.banner-image');
+Route::get('/documents/ticket-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'ticketImage'])
+    ->name('documents.ticket-image');
 
 // Traditional (non-Livewire) file upload for admin settings — see
 // SettingUploadController's doc comment for why this exists: Filament's

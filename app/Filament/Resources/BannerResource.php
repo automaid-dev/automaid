@@ -64,10 +64,14 @@ class BannerResource extends Resource
                     ->color(fn (string $state): string => match ($state) {
                         Banner::TARGET_CUSTOMER => 'info',
                         Banner::TARGET_MERCHANTRIDER => 'warning',
+                        Banner::TARGET_ONBOARDING => 'success',
+                        default => 'gray',
                     })
                     ->formatStateUsing(fn (string $state) => match ($state) {
                         Banner::TARGET_CUSTOMER => 'Customer app',
                         Banner::TARGET_MERCHANTRIDER => 'Merchant/Rider app',
+                        Banner::TARGET_ONBOARDING => 'Onboarding',
+                        default => $state,
                     })
                     ->sortable(),
                 TextColumn::make('link')
@@ -86,6 +90,7 @@ class BannerResource extends Resource
                     ->options([
                         Banner::TARGET_CUSTOMER => 'Customer app',
                         Banner::TARGET_MERCHANTRIDER => 'Merchant/Rider app',
+                        Banner::TARGET_ONBOARDING => 'Onboarding',
                     ]),
             ])
             ->actions([

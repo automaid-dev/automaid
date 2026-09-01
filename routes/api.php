@@ -51,6 +51,12 @@ Route::post('/auth/register2', [AuthController::class, 'register2']);
 Route::post('/setting', [SettingController::class, 'setting']);
 Route::post('/subscription/plans', [SubscriptionPlanController::class, 'index']);
 
+// Onboarding carousel — shown on the very first screen, before login,
+// so this can't sit behind auth:sanctum like the dashboard version of
+// this same endpoint further down. Same controller/method either way;
+// which banners come back depends entirely on the `target` sent.
+Route::post('/onboarding/banners', [\App\Http\Controllers\Api\BannerController::class, 'index']);
+
 Route::middleware('auth:sanctum')->group( function () {
 	Route::post('/profile/device', [ProfileController::class, 'saveDevice']);
 	Route::post('/profile/logout', [ProfileController::class, 'logout']);

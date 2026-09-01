@@ -20,7 +20,7 @@ class BannerController extends Controller
     {
         try {
             $validate = Validator::make($request->all(), [
-                'target' => 'required|in:' . Banner::TARGET_CUSTOMER . ',' . Banner::TARGET_MERCHANTRIDER,
+                'target' => 'required|in:' . Banner::TARGET_CUSTOMER . ',' . Banner::TARGET_MERCHANTRIDER . ',' . Banner::TARGET_ONBOARDING,
             ]);
             if ($validate->fails()) {
                 return response()->json([

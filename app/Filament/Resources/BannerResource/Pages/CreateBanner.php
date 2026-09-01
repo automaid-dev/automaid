@@ -8,6 +8,7 @@ use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Form;
@@ -78,6 +79,11 @@ class CreateBanner extends CreateRecord
                                         ->placeholder('e.g., New Promotion!!')
                                         ->helperText('Shown as a caption under the banner in the app.')
                                         ->maxLength(255),
+                                    Textarea::make('description')
+                                        ->placeholder('e.g., Save your money and time with unlimited laundry service.')
+                                        ->helperText('Only shown on the onboarding carousel — dashboard banners just use the title above.')
+                                        ->rows(3)
+                                        ->maxLength(1000),
                                     TextInput::make('link')
                                         ->label('Link')
                                         ->url()
@@ -96,8 +102,9 @@ class CreateBanner extends CreateRecord
                                     Select::make('target')
                                         ->label('Show on')
                                         ->options([
-                                            Banner::TARGET_CUSTOMER => 'Customer app',
-                                            Banner::TARGET_MERCHANTRIDER => 'Merchant/Rider app',
+                                            Banner::TARGET_CUSTOMER => 'Customer app — dashboard',
+                                            Banner::TARGET_MERCHANTRIDER => 'Merchant/Rider app — dashboard',
+                                            Banner::TARGET_ONBOARDING => 'Customer app — onboarding (before login)',
                                         ])
                                         ->required()
                                         ->default(Banner::TARGET_CUSTOMER),

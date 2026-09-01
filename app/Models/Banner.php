@@ -16,6 +16,10 @@ class Banner extends Model
 
     const TARGET_CUSTOMER = 'customer';
     const TARGET_MERCHANTRIDER = 'merchantrider';
+    // Shown on the very first screen of the customer app, before
+    // login — see the public (no-auth) route this requires, since the
+    // person has no session yet at that point.
+    const TARGET_ONBOARDING = 'onboarding';
 
     protected function casts(): array
     {

@@ -24,6 +24,7 @@ class Transaction extends Model implements Auditable
     // status
     const PENDING = 'pending';
     const PAID = 'paid';
+    const REFUNDED = 'refunded';
 
     /**
      * [booted description]

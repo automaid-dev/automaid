@@ -22,9 +22,12 @@ use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\View;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Illuminate\Support\Facades\Storage;
@@ -42,7 +45,29 @@ class EditOrder extends EditRecord
                 ->modalHeading('Cancel this Order?')
                 ->modalDescription('Are you sure you want to cancel this order? This action cannot be undone.')
                 ->modalSubmitActionLabel('Yes, Cancel Order')
-                ->action(function () {
+                ->form([
+                    // Manual refund tracking, not a live gateway
+                    // integration — see the long comment further down
+                    // where this is processed for exactly why. Only
+                    // offered when there's actually a paid, not-yet-
+                    // refunded payment on this order to refund.
+                    Toggle::make('refund_payment')
+                        ->label('Also mark this payment as refunded')
+                        ->helperText('This only RECORDS the refund and notifies the customer — you still need to actually process the money movement yourself via Fiuu\'s merchant dashboard, bank transfer, or e-wallet.')
+                        ->live()
+                        ->visible(fn () => $this->record->payment && $this->record->payment->is_paid && !$this->record->payment->is_refunded),
+                    TextInput::make('refund_amount')
+                        ->label('Refund amount (RM)')
+                        ->numeric()
+                        ->default(fn () => $this->record->payment->amount ?? $this->record->grand_total ?? 0)
+                        ->required()
+                        ->visible(fn (Get $get) => $get('refund_payment')),
+                    Textarea::make('refund_reason')
+                        ->label('Refund reason')
+                        ->placeholder('e.g., No rider/merchant available in the area to fulfil this order.')
+                        ->visible(fn (Get $get) => $get('refund_payment')),
+                ])
+                ->action(function (array $data) {
 
                     // update status order
                     $this->record->status = Order::CANCELLED;
@@ -109,6 +134,59 @@ class EditOrder extends EditRecord
                     // send pn to merchant
                     if ($this->record->merchant) {
                         event(new \App\Events\MerchantAdminCancelOrder($this->record->merchant->user, $this->record));
+                    }
+
+                    // Manual refund tracking. Deliberately NOT calling a
+                    // Fiuu (or any gateway) refund API here — doing that
+                    // safely requires knowing this merchant account's
+                    // exact refund API credentials/endpoint/behavior
+                    // per payment channel (card vs e-wallet vs FPX all
+                    // differ), none of which is available to verify
+                    // from this codebase alone, and a wrong integration
+                    // risks moving real money incorrectly. This instead
+                    // records that a refund was decided on and
+                    // communicates it to the customer; the actual money
+                    // movement still happens through Fiuu's own
+                    // merchant dashboard (or bank transfer/e-wallet)
+                    // separately, same as before this feature existed.
+                    if (!empty($data['refund_payment']) && $this->record->payment) {
+                        $payment = $this->record->payment;
+                        $payment->is_refunded = true;
+                        $payment->refund_amount = $data['refund_amount'] ?? $payment->amount;
+                        $payment->refunded_at = now();
+                        $payment->refund_reason = $data['refund_reason'] ?? null;
+                        $payment->refunded_by = auth()->user()->id;
+                        $payment->save();
+
+                        if ($this->record->transaction) {
+                            $this->record->transaction->status = \App\Models\Transaction::REFUNDED;
+                            $this->record->transaction->save();
+                        }
+
+                        // Same dual-channel pattern used for every other
+                        // customer-facing notification in this app: the
+                        // customer app's own notification screen reads
+                        // exclusively from customer_notifications
+                        // (CustomerNotification::class), completely
+                        // separate from the Laravel Notifiable
+                        // `notifications` table.
+                        try {
+                            $onesignal = new \App\Services\OneSignalService();
+                            $title = 'Refund processed';
+                            $message = "Your order #{$this->record->id} has been cancelled and RM"
+                                . number_format($payment->refund_amount, 2)
+                                . ' has been refunded.';
+                            $onesignal->notifyUser(
+                                $this->record->user,
+                                \App\Models\CustomerNotification::ORDER_REFUNDED,
+                                $title,
+                                $message,
+                                $message,
+                                $this->record->id,
+                            );
+                        } catch (\Throwable $th) {
+                            \Log::error('Failed to send customer refund notification', ['error' => $th->getMessage(), 'order_id' => $this->record->id]);
+                        }
                     }
 
                     Notification::make()

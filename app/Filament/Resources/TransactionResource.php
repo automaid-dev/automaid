@@ -93,6 +93,8 @@ class TransactionResource extends Resource
                     ->color(fn(string $state): string => match ($state) {
                         'paid' => 'success',
                         'pending' => 'primary',
+                        'refunded' => 'danger',
+                        default => 'gray',
                     })
             ])
             ->defaultSort('id', 'desc')

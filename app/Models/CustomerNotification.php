@@ -29,6 +29,7 @@ class CustomerNotification extends Model
     const RIDER_ACCEPTED = 'rider_accepted';
     const RIDER_ON_THE_WAY_TO_DELIVER = 'rider_on_the_way_to_deliver';
     const ORDER_DELIVERED = 'order_delivered';
+    const ORDER_REFUNDED = 'order_refunded';
 
     protected static function booted()
     {

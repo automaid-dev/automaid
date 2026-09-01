@@ -57,6 +57,14 @@ class TransactionResource extends Resource
                     ->sortable()
                     ->formatStateUsing(fn ($state) => $state->format('d M Y'))                    
                     ->label('Date'),
+                TextColumn::make('id')
+                    ->label('Transaction ID')
+                    ->searchable()
+                    ->sortable(),
+                TextColumn::make('order_id')
+                    ->label('Order ID')
+                    ->searchable()
+                    ->sortable(),
                 TextColumn::make('order.user.name')
                     ->label('Name')
                     ->searchable()

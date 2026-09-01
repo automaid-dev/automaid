@@ -102,7 +102,7 @@ class EditAnnouncement extends EditRecord
                                         ->label('Banner Image')
                                         ->image()
                                         ->disk('s3')
-                                        ->visibility('public')
+                                        ->visibility('private')
                                         ->maxSize(10240)
                                         ->maxFiles(1)
                                         ->directory('automaid/announcements')

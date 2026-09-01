@@ -115,7 +115,20 @@ class CreateBanner extends CreateRecord
                                         ->label('Banner Image')
                                         ->image()
                                         ->disk('s3')
-                                        ->visibility('public')
+                                        ->visibility('private')
+                                        // Private, not public — this S3 bucket has
+                                        // Block Public Access enabled (the same reason
+                                        // OrderStepPhoto/Booking/Ticket images are all
+                                        // served through a Laravel proxy rather than a
+                                        // raw S3 URL). Filament's own visibility('public')
+                                        // makes it try to apply a public-read ACL on
+                                        // upload, which AWS rejects outright when Block
+                                        // Public Access is on — that rejection is exactly
+                                        // what surfaced as "failed to upload" here. This
+                                        // same fix was applied to every other
+                                        // visibility('public') FileUpload in the admin
+                                        // (Announcement, User avatar/KYC documents),
+                                        // since they all had the identical landmine.
                                         ->maxSize(10240)
                                         ->maxFiles(1)
                                         ->storeFiles()

@@ -338,7 +338,7 @@ class EditUser extends EditRecord
                                                                 ->avatar()
                                                                 ->disk('s3')
                                                                 ->directory('automaid/images/avatars')
-                                                                ->visibility('public')
+                                                                ->visibility('private')
                                                                 ->maxSize(200)
                                                                 ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/jpg'])
                                                                 ->helperText('Allowed JPG, JPEG or PNG. Max size of 200K'),
@@ -1159,7 +1159,7 @@ class EditUser extends EditRecord
                                                     ->directory('automaid/images/merchants')
                                                     ->live()
                                                     ->preserveFilenames(false)
-                                                    ->visibility('public')
+                                                    ->visibility('private')
                                                     ->helperText(function () {
                                                         if (!$this->record?->merchant?->ic_front) {
                                                             return null;
@@ -1175,7 +1175,7 @@ class EditUser extends EditRecord
                                                     ->directory('automaid/images/merchants')
                                                     ->live()
                                                     ->preserveFilenames(false)
-                                                    ->visibility('public')
+                                                    ->visibility('private')
                                                     ->helperText(function () {
                                                         if (!$this->record?->merchant?->ic_back) {
                                                             return null;
@@ -1191,7 +1191,7 @@ class EditUser extends EditRecord
                                                     ->directory('automaid/images/merchants')
                                                     ->live()
                                                     ->preserveFilenames(false)
-                                                    ->visibility('public')
+                                                    ->visibility('private')
                                                     ->helperText(function () {
                                                         if (!$this->record?->merchant?->ssm_cert) {
                                                             return null;

@@ -57,12 +57,17 @@ class Announcement extends Model implements Auditable
     }
     
     /**
-     * [getImageFullUrlAttribute description]
-     * @return [type] [description]
+     * Proxied through PublicDocumentController rather than a raw S3
+     * URL — this bucket has Block Public Access / ACLs disabled (AWS's
+     * current default), so a direct S3 URL returns AccessDenied
+     * regardless of upload visibility settings. This was also silently
+     * failing to even UPLOAD until the admin form's FileUpload
+     * visibility('public') setting was changed to 'private' — see
+     * CreateAnnouncement/EditAnnouncement.
      */
     public function getImageFullUrlAttribute()
     {
-        return $this->image_url ? Storage::disk('s3')->url($this->image_url) : null;
+        return $this->image_url ? route('documents.announcement-image', $this->hashslug) : null;
     }
 
 }

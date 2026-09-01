@@ -7,6 +7,7 @@ use App\Models\OrderStepPhoto;
 use App\Models\Booking;
 use App\Models\Banner;
 use App\Models\Ticket;
+use App\Models\Announcement;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 
@@ -141,6 +142,27 @@ class PublicDocumentController extends Controller
         return response($contents, 200, [
             'Content-Type' => $mime,
             'Cache-Control' => 'public, max-age=3600',
+        ]);
+    }
+
+    /**
+     * Serves an announcement's image — same S3 Block Public Access
+     * reasoning as the other proxy methods above.
+     */
+    public function announcementImage(string $hashslug): Response
+    {
+        $announcement = Announcement::where('hashslug', $hashslug)->first();
+
+        if (!$announcement || !$announcement->image_url || !Storage::disk('s3')->exists($announcement->image_url)) {
+            abort(404, 'Image not found.');
+        }
+
+        $contents = Storage::disk('s3')->get($announcement->image_url);
+        $mime = Storage::disk('s3')->mimeType($announcement->image_url) ?? 'image/jpeg';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=86400',
         ]);
     }
 }

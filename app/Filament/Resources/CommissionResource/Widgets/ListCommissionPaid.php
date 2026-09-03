@@ -41,10 +41,16 @@ class ListCommissionPaid extends BaseWidget
         return $table
             ->query(
                 Commission::query()
-                    ->where('status', Commission::PAID)
+                    // Same reasoning as ListPendingPayout's matching
+                    // fix — checking actual PAID transactions directly
+                    // rather than the static wallet-level status flag,
+                    // since a wallet can have both paid and pending
+                    // transactions at once (e.g. right after being
+                    // settled once, then earning something new).
+                    ->whereHas('transactions', fn ($q) => $q->where('status', CommissionTransaction::PAID))
                     ->with('user.roles')
-                    ->withCount(['transactions as total_order'])
-                    ->withSum(['transactions as total_commission' => fn($q) => $q->whereNotNull('final_amount')], 'final_amount')
+                    ->withCount(['transactions as total_order' => fn ($q) => $q->where('status', CommissionTransaction::PAID)])
+                    ->withSum(['transactions as total_commission' => fn ($q) => $q->where('status', CommissionTransaction::PAID)->whereNotNull('final_amount')], 'final_amount')
                     ->latest()
             )
             ->columns([
@@ -67,6 +73,7 @@ class ListCommissionPaid extends BaseWidget
                     ->color(fn(string $state): string => match ($state) {
                         'paid' => 'success',
                         'pending' => 'danger',
+                        default => 'gray',
                     })
                     ->formatStateUsing(fn(string $state): string => strtoupper($state))
                     ->label('Status'),

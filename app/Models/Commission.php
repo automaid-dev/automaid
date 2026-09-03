@@ -14,6 +14,12 @@ class Commission extends Model implements Auditable
 
     protected $guarded = ['id'];
     protected $table = 'commissions';
+    // Exposes both as plain fields on every API response that already
+    // eager-loads this model (both Merchant and Rider ProfileController
+    // already load 'wallet.transactions', so no controller changes are
+    // needed for these to show up) — lets the app display them
+    // directly rather than summing `transactions` client-side itself.
+    protected $appends = ['lifetime_earnings', 'pending_settlement'];
 
     const PENDING = 'pending'; // pending payouts
     const PAID = 'paid'; // paid
@@ -62,7 +68,35 @@ class Commission extends Model implements Auditable
         return $this->hasMany(\App\Models\CommissionTransaction::class);
     }
 
+    /**
+     * Alias for `balance` — balance is already computed as the sum of
+     * every transaction's final_amount regardless of paid/pending
+     * status (see insertCommissionEwallet), which is exactly "lifetime
+     * earnings". Named explicitly here so the API response is
+     * self-describing rather than the app having to know that
+     * "balance" happens to mean lifetime total.
+     * @return float
+     */
+    public function getLifetimeEarningsAttribute()
+    {
+        return (float) $this->balance;
+    }
 
+    /**
+     * Sum of this wallet's not-yet-settled transactions — the amount
+     * still owed, as distinct from lifetime_earnings above. Previously
+     * nothing on this model (or exposed via the API) distinguished
+     * "ever earned" from "still owed"; the app only ever had
+     * `balance`, an ever-growing lifetime total that never reflected
+     * whether a payout had already happened.
+     * @return float
+     */
+    public function getPendingSettlementAttribute()
+    {
+        return (float) $this->transactions()
+            ->where('status', CommissionTransaction::PENDING)
+            ->sum('final_amount');
+    }
 }
 
 

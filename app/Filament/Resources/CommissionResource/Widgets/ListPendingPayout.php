@@ -4,6 +4,7 @@ namespace App\Filament\Resources\CommissionResource\Widgets;
 
 use App\Filament\Resources\CommissionResource;
 use App\Models\Commission;
+use App\Models\CommissionPayment;
 use App\Models\CommissionTransaction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Textarea;
@@ -31,10 +32,22 @@ class ListPendingPayout extends BaseWidget
         return $table
             ->query(
                 Commission::query()
-                    ->where('status', Commission::PENDING)
+                    // Previously filtered by Commission::where('status',
+                    // Commission::PENDING) — a single static flag on the
+                    // wallet as a whole. Once admin settled a user even
+                    // once, that flag flipped to 'paid' and never reset,
+                    // so any NEW commission they earned afterward (which
+                    // creates a fresh PENDING CommissionTransaction
+                    // underneath) became permanently invisible here —
+                    // the wallet had genuinely pending money owed to
+                    // them, but this list would never show it again.
+                    // Checking the actual transactions directly means
+                    // this reflects reality regardless of whatever the
+                    // wallet-level status happens to say.
+                    ->whereHas('transactions', fn ($q) => $q->where('status', CommissionTransaction::PENDING))
                     ->with('user.roles', 'user.rider', 'user.merchant')
-                    ->withCount(['transactions as total_order'])
-                    ->withSum(['transactions as total_commission' => fn($q) => $q->whereNotNull('final_amount')], 'final_amount')
+                    ->withCount(['transactions as total_order' => fn ($q) => $q->where('status', CommissionTransaction::PENDING)])
+                    ->withSum(['transactions as total_commission' => fn ($q) => $q->where('status', CommissionTransaction::PENDING)->whereNotNull('final_amount')], 'final_amount')
                     ->latest()
             )
             ->columns([
@@ -109,16 +122,76 @@ class ListPendingPayout extends BaseWidget
                     ->modalDescription("Are you sure you want to mark the status as 'Paid'? Note that this is a manual approval, and payment must be made directly to the user")
                     ->modalWidth('lg')
                     ->action(function (Collection $records) {
-                        $updatedCount = 0;
+                        $settledCount = 0;
                         foreach ($records as $record) {
-                            if ($record->status !== Commission::PAID) {
-                                $record->update(['status' => Commission::PAID]);
-                                $record->transactions()->update(['status' => CommissionTransaction::PAID]);
-                                $updatedCount++;
+                            // Only the still-PENDING transactions —
+                            // previously this marked every transaction
+                            // on the wallet as paid regardless of
+                            // status, which was harmless the first time
+                            // (nothing to double-settle yet) but would
+                            // have silently no-op'd on rows already paid
+                            // in an earlier settlement while doing
+                            // nothing to guarantee it couldn't touch
+                            // them again if this action ever changed.
+                            $pending = $record->transactions()->where('status', CommissionTransaction::PENDING)->get();
+                            if ($pending->isEmpty()) {
+                                continue;
                             }
+
+                            foreach ($pending as $transaction) {
+                                $transaction->status = CommissionTransaction::PAID;
+                                $transaction->is_paid = true;
+                                $transaction->paid_at = now();
+                                $transaction->paid_by = auth()->id();
+                                $transaction->save();
+
+                                // Per-transaction audit record — this
+                                // table already existed (migration ran
+                                // fine) but its model class was never
+                                // created, so CommissionTransaction::
+                                // payments() threw "Class not found"
+                                // the moment anything tried to load it.
+                                CommissionPayment::create([
+                                    'commission_id' => $record->id,
+                                    'commission_transaction_id' => $transaction->id,
+                                    'is_paid' => true,
+                                    'paid_at' => now(),
+                                    'paid_by' => auth()->id(),
+                                    'amount' => $transaction->final_amount,
+                                    'status' => CommissionPayment::PAID,
+                                    'created_by' => auth()->id(),
+                                ]);
+                            }
+
+                            // Kept as an informational "last known
+                            // state" field, not something any list query
+                            // relies on for filtering anymore — recomputed
+                            // from whether any pending transactions
+                            // actually remain, rather than being set
+                            // once and left stale.
+                            $record->status = $record->transactions()->where('status', CommissionTransaction::PENDING)->exists()
+                                ? Commission::PENDING
+                                : Commission::PAID;
+                            $record->save();
+
+                            // Same dual-channel pattern used for every
+                            // other rider/merchant-facing notification —
+                            // the Laravel Notifiable `notifications`
+                            // table, read by the app's own notification
+                            // screen.
+                            try {
+                                $amount = number_format($pending->sum('final_amount'), 2);
+                                if ($record->user) {
+                                    $record->user->notify(new \App\Notifications\CommissionSettled($record, $amount));
+                                }
+                            } catch (\Throwable $th) {
+                                \Log::error('Failed to send commission settlement notification', ['error' => $th->getMessage(), 'commission_id' => $record->id]);
+                            }
+
+                            $settledCount++;
                         }
                         Notification::make()
-                            ->title("Set $updatedCount record(s) as paid.")
+                            ->title("Settled $settledCount user(s)' pending commission.")
                             ->success()
                             ->send();
                     }),

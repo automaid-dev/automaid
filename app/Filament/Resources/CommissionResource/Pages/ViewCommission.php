@@ -98,6 +98,7 @@ class ViewCommission extends ListRecords
             ->color(fn (string $state): string => match ($state) {
                 'paid' => 'success',
                 'pending' => 'primary',
+                default => 'gray',
             })
             ->label('Payout Status');
 

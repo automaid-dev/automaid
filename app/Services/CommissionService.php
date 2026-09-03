@@ -57,7 +57,16 @@ class CommissionService
 	    );
 
 	    // update balance
-	    $total = $commission->transactions()->sum('amount'); 
+	    //
+	    // Previously summed 'amount' here, but admin's own commission
+	    // edit action (ViewCommission's "edit" row action) corrects
+	    // 'final_amount' instead — meaning any admin-corrected
+	    // transaction would silently drift out of sync with this
+	    // balance, which never reflected the correction. final_amount
+	    // is always populated at creation (set to the same value as
+	    // amount below) and is the one field meant to represent "what
+	    // actually gets paid", so it's the right one to sum here too.
+	    $total = $commission->transactions()->sum('final_amount'); 
 	    $commission->balance = $total;
 	    $commission->last_transaction_at = now();
 	    $commission->save();        

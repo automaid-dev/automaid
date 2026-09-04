@@ -68,9 +68,9 @@ class ViewCommission extends ListRecords
 
         $columns = [
             TextColumn::make('no')->label('No')->rowIndex(),
-            TextColumn::make('order.series_no')
+            TextColumn::make('order.id')
                 ->label('Order ID')
-                ->getStateUsing(fn ($record) => $record->order?->series_no ?? '-')
+                ->getStateUsing(fn ($record) => $record->order?->id ?? '-')
                 ->searchable(),
             TextColumn::make('order.created_at')
                 ->label('Order Date')
@@ -116,8 +116,21 @@ class ViewCommission extends ListRecords
                         TextInput::make('final_amount')
                             ->label('Commission Amount (RM)*')
                             ->required()
-                            ->numeric()
-                            ->default(fn ($record) => $record->final_amount ?? 0),
+                            ->numeric(),
+                    ])
+                    // Previously the amount shown when opening this
+                    // modal relied on the field's own ->default()
+                    // callback — for a plain row Action (not
+                    // Filament's dedicated EditAction), that's not
+                    // reliably re-evaluated fresh each time the modal
+                    // opens, so clicking edit on one row could show an
+                    // amount left over from whichever OTHER row's
+                    // modal was opened last, not the row actually
+                    // clicked. ->fillForm() is the documented way to
+                    // force the form to load fresh from the specific
+                    // record every time this action is triggered.
+                    ->fillForm(fn (CommissionTransaction $record): array => [
+                        'final_amount' => $record->final_amount ?? 0,
                     ])
                     ->action(function (CommissionTransaction $record, array $data) {
                         $record->update([

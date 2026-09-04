@@ -82,8 +82,17 @@ class OrderResource extends Resource
                         'paid' => 'success',
                         'pending' => 'danger',
                         'cancelled' => 'danger',
+                        default => 'gray',
                     })
                     ->sortable(),  
+                TextColumn::make('billing_city')
+                    ->label('City')
+                    ->searchable()
+                    ->sortable(),
+                TextColumn::make('billing_state')
+                    ->label('State')
+                    ->searchable()
+                    ->sortable(),
                 TextColumn::make('customer_latest_status.status.desc')
                     ->label('Status Order')
                     ->badge()

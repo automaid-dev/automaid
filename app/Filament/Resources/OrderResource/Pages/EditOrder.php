@@ -1206,7 +1206,7 @@ class EditOrder extends EditRecord
                                             Placeholder::make('customer_name')->label(false)->content($this->record->user->name ?? null),
                                             Placeholder::make('label_order_number')->label(false)->content('Order #'),
                                             Placeholder::make('order_number')->label(false)->content(new \Illuminate\Support\HtmlString('<strong>' . $this->record->id . '</strong> <span style="color:#6b7280;font-size:12px">(shown in customer/rider/merchant apps)</span>')),
-                                            Placeholder::make('label_order_id')->label(false)->content('Order ID'),
+                                            Placeholder::make('label_order_id')->label(false)->content('Serial No'),
                                             Placeholder::make('order_id')->label(false)->content($this->record->series_no ?? null),
                                             Placeholder::make('label_order_date')->label(false)->content('Order Date'),
                                             Placeholder::make('order_date')->label(false)->content($this->record->booking->pickup_date),

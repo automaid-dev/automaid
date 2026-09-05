@@ -34,7 +34,7 @@ class OrderList extends BaseWidget
                     ->label('No')
                     ->rowIndex()
                     ->sortable(), 
-                TextColumn::make('series_no')
+                TextColumn::make('id')
                     ->label('Order ID')
                     ->sortable()
                     ->searchable(), 

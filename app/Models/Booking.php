@@ -17,7 +17,7 @@ class Booking extends Model implements Auditable
 
     protected $guarded = ['id'];
     protected $table = 'bookings';
-    protected $appends = ['landmark_picture_url'];
+    protected $appends = ['landmark_picture_url', 'pickup_photo_url'];
 
     const ACTIVE = 'active';
     const PENDING = 'pending';
@@ -77,6 +77,25 @@ class Booking extends Model implements Auditable
     public function getLandmarkPictureUrlAttribute()
     {
         return $this->landmark_picture ? route('documents.landmark-picture', $this->hashslug) : null;
+    }
+
+    /**
+     * Proxied through PublicDocumentController rather than a raw S3
+     * URL — same Block Public Access reasoning as
+     * landmark_picture_url above. This accessor (and the
+     * pickup_photo_url entry in $appends above) had gone missing
+     * entirely from this model at some point — not just broken, not
+     * present at all — which meant `$booking->pickup_photo_url`
+     * silently evaluated to null everywhere it was read: in this
+     * admin's own order detail page, and in every API response sent to
+     * the customer and rider apps. The actual uploaded file was never
+     * missing (it uploads to S3 under bookings/ correctly, confirmed
+     * directly in the bucket) — nothing was ever able to generate a
+     * URL pointing at it.
+     */
+    public function getPickupPhotoUrlAttribute()
+    {
+        return $this->pickup_photo_path ? route('documents.pickup-photo', $this->hashslug) : null;
     }
 
     /**

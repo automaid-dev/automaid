@@ -1,11 +1,6 @@
-@php
-    use Illuminate\Support\Facades\Storage;
-@endphp
-
 @if ($hasLandmarkPicture)
     @php
-        $path = $record?->booking?->landmark_picture ?? null;
-        $url = $path ? Storage::disk('s3')->url($path) : null;
+        $url = $record?->booking?->landmark_picture_url ?? null;
     @endphp
     <div>
         @if ($url)

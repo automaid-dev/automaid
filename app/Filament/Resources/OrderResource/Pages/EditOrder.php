@@ -1282,6 +1282,29 @@ class EditOrder extends EditRecord
                                                     'record' => $this->record,
                                                     'hasLandmarkPicture' => !empty(optional($this->record->booking)->landmark_picture),
                                                 ]),
+                                            // Mandatory since the pickup-photo feature was
+                                            // added — the photo + note the customer
+                                            // provides at booking time showing exactly
+                                            // where they're leaving the laundry (e.g. "left
+                                            // at hotel lobby with reception, ask for
+                                            // Ariff"), same as what the rider app shows on
+                                            // its own order detail screen.
+                                            Placeholder::make('label_pickup_photo')->label(false)->content('Customer Pickup Photo & Note'),
+                                            Placeholder::make('pickup_photo_and_note')
+                                                ->label(false)
+                                                ->content(function () {
+                                                    $booking = $this->record->booking;
+                                                    if (!$booking || !$booking->pickup_photo_path) {
+                                                        return new \Illuminate\Support\HtmlString('<p style="color: gray;">No pickup photo provided.</p>');
+                                                    }
+                                                    $html = '<a href="' . e($booking->pickup_photo_url) . '" target="_blank" rel="noopener noreferrer">'
+                                                        . '<img src="' . e($booking->pickup_photo_url) . '" alt="Pickup Photo" style="max-width: 25%; border-radius: 8px; display:block; margin-bottom:6px;" />'
+                                                        . '</a>';
+                                                    if ($booking->pickup_note) {
+                                                        $html .= '<div style="font-size:13px;color:#4b5563;">' . e($booking->pickup_note) . '</div>';
+                                                    }
+                                                    return new \Illuminate\Support\HtmlString($html);
+                                                }),
                                         ]),
                                 ]),
                             Section::make('Customer Order Status')
@@ -1304,6 +1327,72 @@ class EditOrder extends EditRecord
                                         ->schema([
                                             ...$merchantPlaceholders,
                                         ]),
+                                ]),
+                            Section::make('Order Flow Photos')
+                                ->description('Every photo captured along this order\'s journey — the same evidence the customer and rider/merchant apps show, in one place so the bag\'s flow can be tracked end to end.')
+                                ->schema([
+                                    Placeholder::make('order_flow_photos')
+                                        ->label(false)
+                                        ->content(function () use ($statusDescriptions) {
+                                            $booking = $this->record->booking;
+                                            $stepPhotos = $this->record->step_photos()->get();
+                                            $codeDescriptions = \App\Models\Status::pluck('desc', 'code');
+                                            // Customer-uploaded complaint photos for this
+                                            // specific order (e.g. "missing or wrong
+                                            // items", "quality/hygiene issues") — a second
+                                            // source of customer-side imagery beyond the
+                                            // booking handoff photo below, found while
+                                            // checking the customer app's own upload flows
+                                            // directly rather than assuming only one exists.
+                                            $tickets = \App\Models\Ticket::where('order_id', $this->record->id)
+                                                ->whereNotNull('image')
+                                                ->get();
+
+                                            $cards = [];
+
+                                            // The customer's own handoff photo, captured
+                                            // at booking time — not tied to a status code
+                                            // the way step photos are, so it's shown first
+                                            // as its own distinct card rather than folded
+                                            // into the timeline below.
+                                            if ($booking && $booking->pickup_photo_path) {
+                                                $cards[] = '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">'
+                                                    . '<div style="font-weight:600;margin-bottom:6px;">Customer\'s pickup photo</div>'
+                                                    . '<img src="' . e($booking->pickup_photo_url) . '" style="max-width:220px;border-radius:6px;display:block;margin-bottom:6px;" />'
+                                                    . ($booking->pickup_note ? '<div style="font-size:13px;color:#4b5563;">' . e($booking->pickup_note) . '</div>' : '')
+                                                    . '</div>';
+                                            }
+
+                                            foreach ($stepPhotos as $photo) {
+                                                $label = $codeDescriptions[$photo->code] ?? ($statusDescriptions[$photo->code] ?? "Code {$photo->code}");
+                                                $takenBy = optional(\App\Models\User::find($photo->created_by))->name ?? '-';
+                                                $cards[] = '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">'
+                                                    . '<div style="font-weight:600;margin-bottom:6px;">' . e($label) . '</div>'
+                                                    . ($photo->image_url
+                                                        ? '<a href="' . e($photo->image_url) . '" target="_blank"><img src="' . e($photo->image_url) . '" style="max-width:220px;border-radius:6px;display:block;margin-bottom:6px;" /></a>'
+                                                        : '<div style="color:#9ca3af;font-size:13px;">No photo</div>')
+                                                    . ($photo->remark ? '<div style="font-size:13px;color:#4b5563;margin-bottom:4px;">' . e($photo->remark) . '</div>' : '')
+                                                    . '<div style="font-size:12px;color:#9ca3af;">' . e($takenBy) . ' — ' . $photo->created_at->format('d M Y, h:i A') . '</div>'
+                                                    . '</div>';
+                                            }
+
+                                            foreach ($tickets as $ticket) {
+                                                $cards[] = '<div style="border:1px solid #f59e0b;border-radius:8px;padding:12px;">'
+                                                    . '<div style="font-weight:600;margin-bottom:6px;">Complaint: ' . e($ticket->issue_type ?? 'Ticket') . '</div>'
+                                                    . '<a href="' . e($ticket->image_url) . '" target="_blank"><img src="' . e($ticket->image_url) . '" style="max-width:220px;border-radius:6px;display:block;margin-bottom:6px;" /></a>'
+                                                    . ($ticket->issue ? '<div style="font-size:13px;color:#4b5563;margin-bottom:4px;">' . e($ticket->issue) . '</div>' : '')
+                                                    . '<div style="font-size:12px;color:#9ca3af;">Filed ' . $ticket->created_at->format('d M Y, h:i A') . '</div>'
+                                                    . '</div>';
+                                            }
+
+                                            if (empty($cards)) {
+                                                return new \Illuminate\Support\HtmlString('<div style="color:#9ca3af;">No flow photos captured for this order yet.</div>');
+                                            }
+
+                                            return new \Illuminate\Support\HtmlString(
+                                                '<div style="display:flex;flex-wrap:wrap;gap:12px;">' . implode('', $cards) . '</div>'
+                                            );
+                                        }),
                                 ]),
 
                         ])->columnSpan(2),

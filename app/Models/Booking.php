@@ -65,9 +65,18 @@ class Booking extends Model implements Auditable
      * [getLandmarkPictureUrlAttribute description]
      * @return [type] [description]
      */
+    /**
+     * Proxied through PublicDocumentController rather than a raw S3
+     * URL — same reasoning as pickup_photo_url below: this bucket has
+     * Block Public Access enabled, so a direct S3 URL returns
+     * AccessDenied. This was flagged as broken when pickup_photo_url
+     * was added but left unfixed at the time since it wasn't in scope
+     * then — fixing it now while directly touching this same pickup
+     * info display.
+     */
     public function getLandmarkPictureUrlAttribute()
     {
-        return $this->landmark_picture ? Storage::disk('s3')->url($this->landmark_picture) : null;
+        return $this->landmark_picture ? route('documents.landmark-picture', $this->hashslug) : null;
     }
 
     /**

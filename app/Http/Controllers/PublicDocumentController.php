@@ -101,6 +101,30 @@ class PublicDocumentController extends Controller
     }
 
     /**
+     * Serves the customer's landmark picture (an older field, set
+     * alongside a text landmark description to help the rider find
+     * the address) — same S3 Block Public Access reasoning as
+     * pickupPhoto() above. This field's own accessor was returning a
+     * raw, broken S3 URL until now.
+     */
+    public function landmarkPicture(string $hashslug): Response
+    {
+        $booking = Booking::where('hashslug', $hashslug)->first();
+
+        if (!$booking || !$booking->landmark_picture || !Storage::disk('s3')->exists($booking->landmark_picture)) {
+            abort(404, 'Photo not found.');
+        }
+
+        $contents = Storage::disk('s3')->get($booking->landmark_picture);
+        $mime = Storage::disk('s3')->mimeType($booking->landmark_picture) ?? 'image/jpeg';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=3600',
+        ]);
+    }
+
+    /**
      * Serves a dashboard promotional banner image — same S3 Block
      * Public Access reasoning as stepPhoto()/pickupPhoto() above.
      */

@@ -210,6 +210,22 @@ class UserResource extends Resource
                             'Your application has been approved — you can start now.',
                             $emailContent
                         );
+
+                        // Rider/merchant apps read their in-app
+                        // Notifications screen from Laravel's own
+                        // notifications table (see
+                        // Api/Rider|Merchant/HomeController::notifications),
+                        // which the CustomerNotification write above
+                        // never touches — without this, an approved
+                        // rider/merchant saw nothing in that screen at
+                        // all. Customers aren't included: this
+                        // "keep on duty" wording doesn't apply to them,
+                        // and their own approval messaging is already
+                        // covered by the email + CustomerNotification
+                        // row above.
+                        if ($record->hasRole(['rider', 'merchant'])) {
+                            $record->notify(new \App\Notifications\UserApproved());
+                        }
                     })
                     ->visible(fn ($record) => $record->status === 'onboarding'),
                 Impersonate::make()

@@ -42,6 +42,18 @@ class CommissionService
 	    }
 
 	    // add transaction
+	    //
+	    // 'amount'/'final_amount' must be THIS order's own commission
+	    // ($amount, computed by getTotalCommission() below and passed
+	    // into this function) — not $commission->balance, which is the
+	    // user's *cumulative running total from every prior order*.
+	    // Using balance here meant every transaction after a user's
+	    // very first one recorded the wrong figure: the total earned
+	    // *before* this order, instead of what this order itself
+	    // actually earned. See the identical fix + full explanation on
+	    // DeliveryController::insertCommissionEwallet, which had the
+	    // same bug — this service duplicates that method rather than
+	    // being called by it, so both copies needed the same fix.
 	    CommissionTransaction::firstOrCreate(
 	        [
 	            'commission_id' => $commission->id, 
@@ -49,8 +61,8 @@ class CommissionService
 	        ],
 	        [
 	            'type' => CommissionTransaction::EARNED,
-	            'amount' => $commission->balance,
-	            'final_amount' => $commission->balance,
+	            'amount' => $amount,
+	            'final_amount' => $amount,
 	            'status' => CommissionTransaction::PENDING,
 	            'desc' => null,
 	        ]

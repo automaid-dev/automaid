@@ -337,6 +337,19 @@ class DeliveryController extends Controller
         }
 
         // add transaction
+        //
+        // 'amount'/'final_amount' must be THIS order's own commission
+        // ($amount, the value already computed by getTotalCommission()
+        // and passed into this function) — not $commission->balance,
+        // which is the user's *cumulative running total from every
+        // prior order*. Using balance here meant every transaction
+        // after a user's very first one recorded the wrong figure: the
+        // total earned *before* this order, instead of what this order
+        // itself actually earned. It looked plausible in the app
+        // (still a real number that grew order to order) which is why
+        // it went unnoticed — the giveaway was that an order's shown
+        // commission exactly equalled the sum of every earlier order's
+        // commission for that same user.
         CommissionTransaction::firstOrCreate(
             [
                 'commission_id' => $commission->id, 
@@ -344,8 +357,8 @@ class DeliveryController extends Controller
             ],
             [
                 'type' => CommissionTransaction::EARNED,
-                'amount' => $commission->balance,
-                'final_amount' => $commission->balance,
+                'amount' => $amount,
+                'final_amount' => $amount,
                 'status' => CommissionTransaction::PENDING,
                 'desc' => null,
             ]

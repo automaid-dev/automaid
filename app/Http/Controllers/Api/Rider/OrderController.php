@@ -316,6 +316,15 @@ class OrderController extends Controller
                     'order_addons.addon',
                     'delivered',
                     'qrcode_users.qrcode',
+                    // Scoped to this rider's own Commission so the app
+                    // can show a "Settled"/"Pending" badge on this
+                    // order — same scoping as ProfileController's
+                    // activity feed, never exposing another party's cut.
+                    'commission_transactions' => function ($q) use ($user) {
+                        $q->whereHas('commission', function ($cq) use ($user) {
+                            $cq->where('user_id', $user->id);
+                        });
+                    },
                 ]);
                 $data['order'] = $order;
                 return response()->json([

@@ -68,6 +68,16 @@ class CommissionTransaction extends Model implements Auditable
         return $this->belongsTo(\App\Models\Order::class);
     }
 
+    /**
+     * The settlement batch this transaction was paid out in — null
+     * until settled.
+     * @return [type] [description]
+     */
+    public function settlement()
+    {
+        return $this->belongsTo(\App\Models\CommissionSettlement::class, 'commission_settlement_id');
+    }
+
 
 
 }

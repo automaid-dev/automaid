@@ -68,4 +68,13 @@ class CommissionPayment extends Model
     {
         return $this->belongsTo(\App\Models\User::class, 'paid_by');
     }
+
+    /**
+     * The settlement batch this per-transaction payment record belongs to.
+     * @return [type] [description]
+     */
+    public function settlement()
+    {
+        return $this->belongsTo(\App\Models\CommissionSettlement::class, 'commission_settlement_id');
+    }
 }

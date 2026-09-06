@@ -208,6 +208,10 @@ Route::middleware('auth:sanctum')->group( function () {
 
 		// re-apply
 		Route::post('/re-apply/update', [\App\Http\Controllers\Api\Rider\ReapplyController::class, 'reApplyUpdate']);
+
+		// settlement history / receipts
+		Route::post('/settlement/list', [\App\Http\Controllers\Api\Rider\SettlementController::class, 'list']);
+		Route::post('/settlement/detail', [\App\Http\Controllers\Api\Rider\SettlementController::class, 'detail']);
 	});	
 
 	// role merchant
@@ -249,6 +253,10 @@ Route::middleware('auth:sanctum')->group( function () {
 
 		// re-apply
 		Route::post('/re-apply/update', [\App\Http\Controllers\Api\Merchant\ReapplyController::class, 'reApplyUpdate']);
+
+		// settlement history / receipts
+		Route::post('/settlement/list', [\App\Http\Controllers\Api\Merchant\SettlementController::class, 'list']);
+		Route::post('/settlement/detail', [\App\Http\Controllers\Api\Merchant\SettlementController::class, 'detail']);
 	});	
 
 	// payment

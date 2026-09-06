@@ -156,6 +156,18 @@ class OrderResource extends Resource
                     })
                     ->numeric(2)
                     ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('rider_settlement_status')
+                    ->label('Rider Payout')
+                    ->badge()
+                    ->state(function ($record) {
+                        $riderUserId = $record->rider->accepted_user->id ?? null;
+                        if (!$riderUserId) return null;
+                        $txn = $record->commission_transactions->where('commission.user_id', $riderUserId)->first();
+                        if (!$txn) return null;
+                        return $txn->status === \App\Models\CommissionTransaction::PAID ? 'Settled' : 'Pending';
+                    })
+                    ->color(fn (?string $state) => $state === 'Settled' ? 'success' : ($state === 'Pending' ? 'warning' : 'gray'))
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('merchant_commission_total')
                     ->label('Merchant Commission (RM)')
                     ->state(function ($record) {
@@ -166,6 +178,18 @@ class OrderResource extends Resource
                             ->sum('final_amount');
                     })
                     ->numeric(2)
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('merchant_settlement_status')
+                    ->label('Merchant Payout')
+                    ->badge()
+                    ->state(function ($record) {
+                        $merchantUserId = $record->merchant->accepted_user->id ?? null;
+                        if (!$merchantUserId) return null;
+                        $txn = $record->commission_transactions->where('commission.user_id', $merchantUserId)->first();
+                        if (!$txn) return null;
+                        return $txn->status === \App\Models\CommissionTransaction::PAID ? 'Settled' : 'Pending';
+                    })
+                    ->color(fn (?string $state) => $state === 'Settled' ? 'success' : ($state === 'Pending' ? 'warning' : 'gray'))
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultSort('id', 'desc')
@@ -209,11 +233,14 @@ class OrderResource extends Resource
                 'Order #', 'Order ID', 'Pickup Date', 'Customer', 'Status', 'Status Order',
                 'City', 'State', 'Rider', 'Merchant',
                 'Washing (RM)', 'Add-on (RM)', 'Insurance (RM)', 'Voucher (RM)', 'SST (RM)',
-                'Delivery (RM)', 'Grand Total (RM)', 'Rider Commission (RM)', 'Merchant Commission (RM)',
+                'Delivery (RM)', 'Grand Total (RM)', 'Rider Commission (RM)', 'Rider Payout',
+                'Merchant Commission (RM)', 'Merchant Payout',
             ]);
             foreach ($orders as $order) {
                 $riderUserId = $order->rider->accepted_user->id ?? null;
                 $merchantUserId = $order->merchant->accepted_user->id ?? null;
+                $riderTxn = $riderUserId ? $order->commission_transactions->where('commission.user_id', $riderUserId)->first() : null;
+                $merchantTxn = $merchantUserId ? $order->commission_transactions->where('commission.user_id', $merchantUserId)->first() : null;
                 $riderCommission = $riderUserId
                     ? $order->commission_transactions->where('commission.user_id', $riderUserId)->sum('final_amount')
                     : 0;
@@ -240,7 +267,9 @@ class OrderResource extends Resource
                     number_format($order->booking->delivery_charge ?? 0, 2),
                     number_format($order->grand_total ?? 0, 2),
                     number_format($riderCommission, 2),
+                    $riderTxn ? ($riderTxn->status === \App\Models\CommissionTransaction::PAID ? 'Settled' : 'Pending') : '-',
                     number_format($merchantCommission, 2),
+                    $merchantTxn ? ($merchantTxn->status === \App\Models\CommissionTransaction::PAID ? 'Settled' : 'Pending') : '-',
                 ]);
             }
             fclose($handle);

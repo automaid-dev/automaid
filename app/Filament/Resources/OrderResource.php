@@ -13,7 +13,9 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Actions\Action;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class OrderResource extends Resource
 {
@@ -167,11 +169,82 @@ class OrderResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultSort('id', 'desc')
+            ->headerActions([
+                // Filament's native queued export (ExportAction +
+                // Exporter) needs the `exports` table AND a working
+                // queue worker actually processing jobs — on this
+                // server the export button did nothing because of
+                // that. Streaming a plain CSV directly in the request,
+                // the same way the dashboard's "Latest Orders" export
+                // already does (LatestOrdersTable::exportCsv), needs
+                // neither: it downloads immediately, synchronously.
+                Action::make('export')
+                    ->label('Export to CSV')
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('gray')
+                    ->action(fn ($livewire) => static::exportCsv($livewire->getFilteredSortedTableQuery()->get())),
+            ])
             ->actions([
                 Tables\Actions\EditAction::make()->label(''),
                 Tables\Actions\DeleteAction::make()->label(''),
 
             ]);
+    }
+
+    /**
+     * Streams a CSV of the given orders — whatever the currently
+     * active tab/filters/search/sort on the table resolved to, so the
+     * export always matches what the admin is actually looking at.
+     * Same money-breakdown columns as the table itself.
+     * @param  \Illuminate\Support\Collection $orders
+     * @return StreamedResponse
+     */
+    protected static function exportCsv($orders): StreamedResponse
+    {
+        $filename = 'orders_' . now()->format('Y-m-d_His') . '.csv';
+
+        return response()->streamDownload(function () use ($orders) {
+            $handle = fopen('php://output', 'w');
+            fputcsv($handle, [
+                'Order #', 'Order ID', 'Pickup Date', 'Customer', 'Status', 'Status Order',
+                'City', 'State', 'Rider', 'Merchant',
+                'Washing (RM)', 'Add-on (RM)', 'Insurance (RM)', 'Voucher (RM)', 'SST (RM)',
+                'Delivery (RM)', 'Grand Total (RM)', 'Rider Commission (RM)', 'Merchant Commission (RM)',
+            ]);
+            foreach ($orders as $order) {
+                $riderUserId = $order->rider->accepted_user->id ?? null;
+                $merchantUserId = $order->merchant->accepted_user->id ?? null;
+                $riderCommission = $riderUserId
+                    ? $order->commission_transactions->where('commission.user_id', $riderUserId)->sum('final_amount')
+                    : 0;
+                $merchantCommission = $merchantUserId
+                    ? $order->commission_transactions->where('commission.user_id', $merchantUserId)->sum('final_amount')
+                    : 0;
+
+                fputcsv($handle, [
+                    $order->id,
+                    $order->series_no,
+                    $order->booking->pickup_date ?? null,
+                    $order->user->name ?? '-',
+                    ucfirst($order->status ?? '-'),
+                    $order->customer_latest_status->status->desc ?? '-',
+                    $order->billing_city,
+                    $order->billing_state,
+                    $order->rider->accepted_user->name ?? '-',
+                    $order->merchant->accepted_user->merchant->company_name ?? '-',
+                    number_format($order->booking->washing_charge ?? 0, 2),
+                    number_format($order->booking->addon_charge ?? 0, 2),
+                    number_format($order->insurance_fee ?? 0, 2),
+                    number_format($order->discount ?? 0, 2),
+                    number_format($order->tax_total ?? 0, 2),
+                    number_format($order->booking->delivery_charge ?? 0, 2),
+                    number_format($order->grand_total ?? 0, 2),
+                    number_format($riderCommission, 2),
+                    number_format($merchantCommission, 2),
+                ]);
+            }
+            fclose($handle);
+        }, $filename, ['Content-Type' => 'text/csv']);
     }
 
     /**

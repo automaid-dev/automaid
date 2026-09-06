@@ -126,12 +126,21 @@ class AuditCommissions extends Command
                 continue;
             }
 
-            // Same total-basis as DeliveryController::deliveryConfirm —
-            // washing + delivery + addon, minus discount, excluding SST.
-            $total = ($booking->washing_charge ?? 0)
-                + ($booking->delivery_charge ?? 0)
-                + ($booking->addon_charge ?? 0)
-                - ($booking->discount ?? 0);
+            // Commission basis differs by role — rider commission is
+            // based on delivery charge alone; merchant commission on
+            // washing + add-on, net of discount. Matches the split
+            // applied in DeliveryController::deliveryConfirm and
+            // EditOrder's manual-completion path.
+            $delivery_charge = $booking->delivery_charge ?? 0;
+            $washing_charge = $booking->washing_charge ?? 0;
+            $addon_charge = $booking->addon_charge ?? 0;
+            $discount = $booking->discount ?? 0;
+
+            if ($role === User::RIDER) {
+                $total = $delivery_charge;
+            } else {
+                $total = ($washing_charge + $addon_charge) - $discount;
+            }
 
             $correct = $commissionService->getTotalCommission($role, $type, $total);
             $stored = (float) $txn->final_amount;

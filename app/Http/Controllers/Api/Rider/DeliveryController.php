@@ -210,15 +210,25 @@ class DeliveryController extends Controller
             $booking->updated_by = $user->id;
             $booking->save();
 
-            // get total without sst
+            // Commission basis differs by role: rider commission is
+            // based on the delivery charge alone (the rider is only
+            // ever paid for the delivery leg, not for the wash or its
+            // add-ons); merchant commission is based on washing +
+            // add-on charges, net of discount (the merchant did the
+            // washing/add-on work, not the delivery). Both exclude
+            // insurance_fee and SST/tax entirely, since neither of
+            // those columns is read here — they live on `order`, not
+            // `booking`, and were never part of this sum to begin
+            // with.
             $delivery_charge = $booking->delivery_charge ?? 0;
             $washing_charge = $booking->washing_charge ?? 0;
             $addon_charge = $booking->addon_charge ?? 0;
             $discount = $booking->discount ?? 0;
-            $grand_total = ($washing_charge + $delivery_charge + $addon_charge) - $discount;
+            $rider_commission_basis = $delivery_charge;
+            $merchant_commission_basis = ($washing_charge + $addon_charge) - $discount;
 
             // set commission rider
-            $commission = $this->getTotalCommission(User::RIDER, $user->rider->type_rider, $grand_total);
+            $commission = $this->getTotalCommission(User::RIDER, $user->rider->type_rider, $rider_commission_basis);
             if ($commission > 0) {
 
                 // insert commission rider
@@ -226,7 +236,7 @@ class DeliveryController extends Controller
             }
 
             // set commission merchant
-            $commission = $this->getTotalCommission(User::MERCHANT, $merchant->merchant->type_merchant, $grand_total);
+            $commission = $this->getTotalCommission(User::MERCHANT, $merchant->merchant->type_merchant, $merchant_commission_basis);
             if ($commission > 0) {
 
                 // insert commission merchant

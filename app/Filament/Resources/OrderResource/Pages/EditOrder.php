@@ -760,19 +760,25 @@ class EditOrder extends EditRecord
                 $booking->updated_by = auth()->user()->id;
                 $booking->save();
                 
-                // get  grand total
+                // Commission basis differs by role — see the matching
+                // comment in DeliveryController::deliveryConfirm: rider
+                // commission is based on delivery charge alone, merchant
+                // commission on washing + add-on net of discount. Both
+                // exclude insurance_fee and SST/tax (neither is read
+                // here; both live on `order`, not `booking`).
                 $delivery_charge = $booking->delivery_charge ?? 0;
                 $washing_charge = $booking->washing_charge ?? 0;
                 $addon_charge = $booking->addon_charge ?? 0;
                 $discount = $booking->discount ?? 0;
-                $grand_total = ($washing_charge + $delivery_charge + $addon_charge) - $discount;
+                $rider_commission_basis = $delivery_charge;
+                $merchant_commission_basis = ($washing_charge + $addon_charge) - $discount;
 
                 // commission service
                 $commission_service = new \App\Services\CommissionService();
 
                 // set commission rider
                 $user = User::find($data['rider_id']);
-                $commission = $commission_service->getTotalCommission(User::RIDER, $user->rider->type_rider, $grand_total);
+                $commission = $commission_service->getTotalCommission(User::RIDER, $user->rider->type_rider, $rider_commission_basis);
                 if ($commission > 0) {
 
                     // insert commission rider
@@ -781,7 +787,7 @@ class EditOrder extends EditRecord
 
                 // set commission merchant
                 $user = User::find($data['merchant_id']);                
-                $commission = $commission_service->getTotalCommission(User::MERCHANT, $user->merchant->type_merchant, $grand_total);
+                $commission = $commission_service->getTotalCommission(User::MERCHANT, $user->merchant->type_merchant, $merchant_commission_basis);
                 if ($commission > 0) {
 
                     // insert commission merchant

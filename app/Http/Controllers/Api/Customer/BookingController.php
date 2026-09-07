@@ -116,6 +116,61 @@ class BookingController extends Controller
     }
 
     /**
+     * Prices a dry-clean bag: sum(item price × quantity) — never
+     * trusting client-sent prices, always looking up the current
+     * ServiceItem.price_per_piece — then applies the subscriber's
+     * per-tier percentage discount (Settings > Dry Cleaning). Unlike
+     * the Wash & Fold free-bag benefit, this is a straight percentage
+     * off, not a quota — every dry-clean order gets it for as long as
+     * the subscription is active, no cycle usage tracked.
+     *
+     * @param  array        $items        [{service_item_id, quantity}, ...]
+     * @param  Subscription|null $subscription
+     * @param  Setting      $setting
+     * @return array [subtotal_after_discount, items_snapshot, discount_percent_applied]
+     */
+    public function calculateDryCleanCharge(array $items, $subscription, $setting)
+    {
+        $itemIds = collect($items)->pluck('service_item_id')->unique();
+        $catalog = \App\Models\ServiceItem::whereIn('id', $itemIds)->get()->keyBy('id');
+
+        $snapshot = [];
+        $subtotal = 0;
+        foreach ($items as $item) {
+            $serviceItem = $catalog->get($item['service_item_id']);
+            if (!$serviceItem) {
+                continue; // unknown/deleted item — silently skipped rather than failing the whole booking
+            }
+            $quantity = (int) $item['quantity'];
+            $unitPrice = (float) $serviceItem->price_per_piece;
+            $lineTotal = round($unitPrice * $quantity, 2);
+            $subtotal += $lineTotal;
+
+            $snapshot[] = [
+                'service_item_id' => $serviceItem->id,
+                'name' => $serviceItem->name,
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'subtotal' => $lineTotal,
+            ];
+        }
+
+        $discountPercent = 0;
+        if ($subscription && $subscription->status === \App\Models\Subscription::ACTIVE) {
+            $discountPercent = match ($subscription->plan_code) {
+                \App\Models\Subscription::BRONZE => (float) ($setting->subscription_bronze_dryclean_discount ?? 0),
+                \App\Models\Subscription::SILVER => (float) ($setting->subscription_silver_dryclean_discount ?? 0),
+                \App\Models\Subscription::PLATINUM => (float) ($setting->subscription_platinum_dryclean_discount ?? 0),
+                default => 0,
+            };
+        }
+
+        $discountedTotal = round($subtotal * (1 - ($discountPercent / 100)), 2);
+
+        return [$discountedTotal, $snapshot, $discountPercent];
+    }
+
+    /**
      * [calculateRate description]
      * @param  Request $request [description]
      * @return [type]           [description]
@@ -388,6 +443,63 @@ class BookingController extends Controller
 
 
     /**
+     * Dry-cleaning catalog for the item-selection screen — every
+     * active category with its active items, plus this customer's
+     * subscriber discount percent (if any) so the app can show
+     * "10% off with your Silver plan" style pricing before checkout,
+     * without a second round-trip.
+     * @param  Request $request [description]
+     * @return [type]           [description]
+     */
+    public function serviceCategoryList(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $setting = Setting::find(1);
+            $subscription = $user->subscribe;
+            $discountPercent = 0;
+            if ($subscription && $subscription->status === \App\Models\Subscription::ACTIVE) {
+                $discountPercent = match ($subscription->plan_code) {
+                    \App\Models\Subscription::BRONZE => (float) ($setting->subscription_bronze_dryclean_discount ?? 0),
+                    \App\Models\Subscription::SILVER => (float) ($setting->subscription_silver_dryclean_discount ?? 0),
+                    \App\Models\Subscription::PLATINUM => (float) ($setting->subscription_platinum_dryclean_discount ?? 0),
+                    default => 0,
+                };
+            }
+
+            $categories = \App\Models\ServiceCategory::where('is_active', true)
+                ->with(['items' => function ($q) {
+                    $q->where('is_active', true);
+                }])
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Successfully retrieved service categories.',
+                'data' => [
+                    'categories' => $categories,
+                    'subscriber_discount_percent' => $discountPercent,
+                    'max_items_per_bag' => $setting->dry_clean_max_items_per_bag ?? 20,
+                ],
+            ]);
+
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ],500);
+        }
+    }
+
+
+    /**
      * [getAddOn description]
      * @param  Request $request [description]
      * @return [type]           [description]
@@ -483,6 +595,37 @@ class BookingController extends Controller
             // ----------------
             $setting = Setting::find(1);
 
+            // Dry-cleaning items — validated here (not in the main
+            // Validator::make above) since the max-items-per-bag limit
+            // is an admin-configurable Setting value, not a fixed rule.
+            // Wash & Fold bookings (no service_category_id) skip this
+            // entirely and behave exactly as before.
+            $dryCleanItems = null;
+            $dryCleanDiscountPercent = null;
+            if ($request->filled('service_category_id')) {
+                $itemsValidate = Validator::make($request->all(), [
+                    'items' => 'required|array|min:1',
+                    'items.*.service_item_id' => 'required|integer',
+                    'items.*.quantity' => 'required|integer|min:1',
+                ]);
+                if ($itemsValidate->fails()) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'validation error',
+                        'errors' => $itemsValidate->errors(),
+                    ]);
+                }
+
+                $totalQuantity = collect($request->items)->sum('quantity');
+                $maxPerBag = $setting->dry_clean_max_items_per_bag ?? 20;
+                if ($totalQuantity > $maxPerBag) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => "This bag can hold up to {$maxPerBag} items — please split into another bag.",
+                    ]);
+                }
+            }
+
             // get pickup address
             $pickup = Address::find($request->pickup_location_id);
             if (!$pickup) {
@@ -576,7 +719,11 @@ class BookingController extends Controller
             // the client (a client-sent washing_charge/delivery_charge
             // here previously went straight into the order unchecked).
             $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
-            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
+            if ($request->filled('service_category_id')) {
+                [$washing_charge, $dryCleanItems, $dryCleanDiscountPercent] = $this->calculateDryCleanCharge($request->items, $subscription, $setting);
+            } else {
+                $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
+            }
             $addon_charge = $request->addon_charge ?? 0;
             $discount = $request->discount ?? 0;
 
@@ -865,6 +1012,9 @@ class BookingController extends Controller
                     'delivery_charge' => $delivery_charge ?? 0,
                     'tax' => $tax_charge ?? 0,
                     'grand_total' => $grand_total,
+                    'service_category_id' => $request->service_category_id ?? null,
+                    'items' => $dryCleanItems ? json_encode($dryCleanItems) : null,
+                    'dry_clean_discount_percent' => $dryCleanDiscountPercent ?? null,
                 ]
             );
 
@@ -893,6 +1043,9 @@ class BookingController extends Controller
                         'tax' => $tax_charge ?? 0,
                         'grand_total' => $grand_total,
                         'status' => ($is_subscribe && $addon_charge == 0 && $tax_charge == 0 || $is_zero) ? Booking::ACTIVE : Booking::PENDING, 
+                        'service_category_id' => $request->service_category_id ?? null,
+                        'items' => $dryCleanItems ? json_encode($dryCleanItems) : null,
+                        'dry_clean_discount_percent' => $dryCleanDiscountPercent ?? null,
                     ]
                 );
 

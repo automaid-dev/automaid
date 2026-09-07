@@ -143,6 +143,7 @@ Route::middleware('auth:sanctum')->group( function () {
 		Route::post('/booking/calculate/rate', [\App\Http\Controllers\Api\Customer\BookingController::class, 'calculateRate']);		
 		Route::post('/booking/addon', [\App\Http\Controllers\Api\Customer\BookingController::class, 'getAddOn']);		
 		Route::post('/booking/addon/lists', [\App\Http\Controllers\Api\Customer\BookingController::class, 'addOnList']);		
+		Route::post('/booking/service-category/lists', [\App\Http\Controllers\Api\Customer\BookingController::class, 'serviceCategoryList']);
 		Route::post('/booking/voucher', [\App\Http\Controllers\Api\Customer\BookingController::class, 'checkVoucher']);		
 		Route::post('/booking/voucher/lists', [\App\Http\Controllers\Api\Customer\BookingController::class, 'voucherList']);		
 		Route::post('/booking/qrcodes', [\App\Http\Controllers\Api\Customer\BookingController::class, 'qrcodeList']);		

@@ -16,6 +16,10 @@ class OrderBooking extends Model implements Auditable
     protected $guarded = ['id'];
     protected $table = 'order_bookings';
 
+    protected $casts = [
+        'items' => 'array',
+    ];
+
     /**
      * [booted description]
      * @return [type] [description]

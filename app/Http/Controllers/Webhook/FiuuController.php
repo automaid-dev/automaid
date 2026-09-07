@@ -365,6 +365,9 @@ class FiuuController extends Controller
                             'tax' => $order_booking->tax,
                             'grand_total' => $order_booking->grand_total,
                             'status' => Booking::ACTIVE,
+                            'service_category_id' => $order_booking->service_category_id,
+                            'items' => $order_booking->items,
+                            'dry_clean_discount_percent' => $order_booking->dry_clean_discount_percent,
                         ]
                     );
 
@@ -866,6 +869,9 @@ class FiuuController extends Controller
                             'tax' => $order_booking->tax,
                             'grand_total' => $order_booking->grand_total,
                             'status' => Booking::ACTIVE,
+                            'service_category_id' => $order_booking->service_category_id,
+                            'items' => $order_booking->items,
+                            'dry_clean_discount_percent' => $order_booking->dry_clean_discount_percent,
                         ]
                     );
 

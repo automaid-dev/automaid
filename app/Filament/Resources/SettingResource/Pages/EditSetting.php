@@ -246,6 +246,44 @@ class EditSetting extends EditRecord
                                                     ]),
                                             ]),
 
+                                        Section::make('Dry Cleaning')
+                                            ->schema([
+                                                Grid::make(2)
+                                                    ->schema([
+                                                        TextInput::make('dry_clean_max_items_per_bag')
+                                                            ->label('Max Items per Bag')
+                                                            ->placeholder('e.g., 20')
+                                                            ->required()
+                                                            ->numeric()
+                                                            ->minValue(1)
+                                                            ->helperText('Customer is prompted to split into another bag beyond this.'),
+                                                        TextInput::make('subscription_bronze_dryclean_discount')
+                                                            ->label('Bronze Subscriber Discount (%)')
+                                                            ->placeholder('e.g., 5')
+                                                            ->required()
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(100)
+                                                            ->suffix('%'),
+                                                        TextInput::make('subscription_silver_dryclean_discount')
+                                                            ->label('Silver Subscriber Discount (%)')
+                                                            ->placeholder('e.g., 10')
+                                                            ->required()
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(100)
+                                                            ->suffix('%'),
+                                                        TextInput::make('subscription_platinum_dryclean_discount')
+                                                            ->label('Platinum Subscriber Discount (%)')
+                                                            ->placeholder('e.g., 15')
+                                                            ->required()
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(100)
+                                                            ->suffix('%'),
+                                                    ]),
+                                            ]),
+
                                     ]),
                                 
                                 Grid::make(4)

@@ -149,6 +149,28 @@ class PublicDocumentController extends Controller
     }
 
     /**
+     * Serves a dry-cleaning catalog item's photo — same reasoning as
+     * bannerImage() above: the catalog is small and changes rarely,
+     * shown on every item-selection screen load.
+     */
+    public function serviceItemImage(string $hashslug): Response
+    {
+        $item = \App\Models\ServiceItem::where('hashslug', $hashslug)->first();
+
+        if (!$item || !$item->image_path || !Storage::disk('s3')->exists($item->image_path)) {
+            abort(404, 'Image not found.');
+        }
+
+        $contents = Storage::disk('s3')->get($item->image_path);
+        $mime = Storage::disk('s3')->mimeType($item->image_path) ?? 'image/jpeg';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'public, max-age=86400',
+        ]);
+    }
+
+    /**
      * Serves a support ticket's attached photo — same S3 Block Public
      * Access reasoning as the other proxy methods above.
      */

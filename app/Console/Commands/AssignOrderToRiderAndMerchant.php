@@ -128,6 +128,23 @@ class AssignOrderToRiderAndMerchant extends Command
                 $date = Carbon::parse($order->created_at)->format('Y-m-d');
                 $city_name = $order->billing_city;
 
+                // Dry-cleaning orders skip the rider/merchant-vs-customer
+                // exact-city matching entirely (covered_locations below) —
+                // dry-clean-capable merchants are sparse, often regional
+                // rather than per-city, and requiring an exact city match
+                // would leave most dry-clean orders with zero candidates.
+                // Whether the order was even allowed to be PLACED in this
+                // location at all is a separate, already-enforced check
+                // (CoverageController's state/city serviceCovered() at
+                // booking time) — this only concerns which specific
+                // merchant/rider handles it. The existing distance-based
+                // "4 nearest" ranking further below still applies
+                // unchanged, so dry-clean assignment still prefers close
+                // candidates among however many pass this looser filter.
+                $isDryCleanOrder = $order->booking
+                    && $order->booking->service_category
+                    && $order->booking->service_category->name === \App\Models\ServiceCategory::DRY_CLEANING;
+
                 // get order status
                 $pending_status = $order->order_statuses;
                 if (count($pending_status) > 0) {
@@ -250,10 +267,12 @@ class AssignOrderToRiderAndMerchant extends Command
                                         // get nearby rider
                                         $users = User::role('rider')
                                             ->has('rider') 
-                                            ->whereHas('covered_locations', function($q) use ($city_name) {
-                                                $q->where('is_active', true);
-                                                $q->whereHas('city', function ($c) use ($city_name) {
-                                                    $c->where('name', $city_name);
+                                            ->when(!$isDryCleanOrder, function ($q) use ($city_name) {
+                                                $q->whereHas('covered_locations', function($cq) use ($city_name) {
+                                                    $cq->where('is_active', true);
+                                                    $cq->whereHas('city', function ($c) use ($city_name) {
+                                                        $c->where('name', $city_name);
+                                                    });
                                                 });
                                             })
                                             ->where('is_duty', true)
@@ -496,10 +515,21 @@ class AssignOrderToRiderAndMerchant extends Command
                                         // get nearby merchant
                                         $users = User::role('merchant')
                                             ->has('merchant') 
-                                            ->whereHas('covered_locations', function($q) use ($city_name) {
-                                                $q->where('is_active', true);
-                                                $q->whereHas('city', function ($c) use ($city_name) {
-                                                    $c->where('name', $city_name);
+                                            ->when($isDryCleanOrder, function ($q) {
+                                                // Capability requirement, replacing (not
+                                                // adding to) the city filter — merchant
+                                                // must have listed Dry Cleaning as one of
+                                                // their service_categories at registration.
+                                                $q->whereHas('merchant', function ($mq) {
+                                                    $mq->whereJsonContains('service_categories', \App\Models\ServiceCategory::DRY_CLEANING);
+                                                });
+                                            })
+                                            ->when(!$isDryCleanOrder, function ($q) use ($city_name) {
+                                                $q->whereHas('covered_locations', function($cq) use ($city_name) {
+                                                    $cq->where('is_active', true);
+                                                    $cq->whereHas('city', function ($c) use ($city_name) {
+                                                        $c->where('name', $city_name);
+                                                    });
                                                 });
                                             })
                                             ->where('is_duty', true)

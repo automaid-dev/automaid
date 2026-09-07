@@ -33,6 +33,7 @@ class Booking extends Model implements Auditable
      */
     protected $casts = [
         'pickup_date' => 'datetime',
+        'items' => 'array',
     ];
 
     /**
@@ -114,6 +115,16 @@ class Booking extends Model implements Auditable
     public function order()
     {
         return $this->belongsTo(\App\Models\Order::class);
+    }
+
+    /**
+     * Null for a Wash & Fold booking (the default/original behavior) —
+     * only set for dry-cleaning (and future per-item-priced) bookings.
+     * @return [type] [description]
+     */
+    public function service_category()
+    {
+        return $this->belongsTo(\App\Models\ServiceCategory::class);
     }
 
     /**

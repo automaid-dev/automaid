@@ -55,6 +55,8 @@ Route::get('/documents/landmark-picture/{hashslug}', [\App\Http\Controllers\Publ
     ->name('documents.landmark-picture');
 Route::get('/documents/banner-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'bannerImage'])
     ->name('documents.banner-image');
+Route::get('/documents/service-item-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'serviceItemImage'])
+    ->name('documents.service-item-image');
 Route::get('/documents/ticket-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'ticketImage'])
     ->name('documents.ticket-image');
 Route::get('/documents/announcement-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'announcementImage'])

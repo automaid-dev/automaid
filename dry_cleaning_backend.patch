@@ -1,0 +1,947 @@
+diff --git a/app/Console/Commands/AssignOrderToRiderAndMerchant.php b/app/Console/Commands/AssignOrderToRiderAndMerchant.php
+index 318627e..d4d5ee4 100644
+--- a/app/Console/Commands/AssignOrderToRiderAndMerchant.php
++++ b/app/Console/Commands/AssignOrderToRiderAndMerchant.php
+@@ -128,6 +128,23 @@ public function handle()
+                 $date = Carbon::parse($order->created_at)->format('Y-m-d');
+                 $city_name = $order->billing_city;
+ 
++                // Dry-cleaning orders skip the rider/merchant-vs-customer
++                // exact-city matching entirely (covered_locations below) —
++                // dry-clean-capable merchants are sparse, often regional
++                // rather than per-city, and requiring an exact city match
++                // would leave most dry-clean orders with zero candidates.
++                // Whether the order was even allowed to be PLACED in this
++                // location at all is a separate, already-enforced check
++                // (CoverageController's state/city serviceCovered() at
++                // booking time) — this only concerns which specific
++                // merchant/rider handles it. The existing distance-based
++                // "4 nearest" ranking further below still applies
++                // unchanged, so dry-clean assignment still prefers close
++                // candidates among however many pass this looser filter.
++                $isDryCleanOrder = $order->booking
++                    && $order->booking->service_category
++                    && $order->booking->service_category->name === \App\Models\ServiceCategory::DRY_CLEANING;
++
+                 // get order status
+                 $pending_status = $order->order_statuses;
+                 if (count($pending_status) > 0) {
+@@ -250,10 +267,12 @@ public function handle()
+                                         // get nearby rider
+                                         $users = User::role('rider')
+                                             ->has('rider') 
+-                                            ->whereHas('covered_locations', function($q) use ($city_name) {
+-                                                $q->where('is_active', true);
+-                                                $q->whereHas('city', function ($c) use ($city_name) {
+-                                                    $c->where('name', $city_name);
++                                            ->when(!$isDryCleanOrder, function ($q) use ($city_name) {
++                                                $q->whereHas('covered_locations', function($cq) use ($city_name) {
++                                                    $cq->where('is_active', true);
++                                                    $cq->whereHas('city', function ($c) use ($city_name) {
++                                                        $c->where('name', $city_name);
++                                                    });
+                                                 });
+                                             })
+                                             ->where('is_duty', true)
+@@ -496,10 +515,21 @@ public function handle()
+                                         // get nearby merchant
+                                         $users = User::role('merchant')
+                                             ->has('merchant') 
+-                                            ->whereHas('covered_locations', function($q) use ($city_name) {
+-                                                $q->where('is_active', true);
+-                                                $q->whereHas('city', function ($c) use ($city_name) {
+-                                                    $c->where('name', $city_name);
++                                            ->when($isDryCleanOrder, function ($q) {
++                                                // Capability requirement, replacing (not
++                                                // adding to) the city filter — merchant
++                                                // must have listed Dry Cleaning as one of
++                                                // their service_categories at registration.
++                                                $q->whereHas('merchant', function ($mq) {
++                                                    $mq->whereJsonContains('service_categories', \App\Models\ServiceCategory::DRY_CLEANING);
++                                                });
++                                            })
++                                            ->when(!$isDryCleanOrder, function ($q) use ($city_name) {
++                                                $q->whereHas('covered_locations', function($cq) use ($city_name) {
++                                                    $cq->where('is_active', true);
++                                                    $cq->whereHas('city', function ($c) use ($city_name) {
++                                                        $c->where('name', $city_name);
++                                                    });
+                                                 });
+                                             })
+                                             ->where('is_duty', true)
+diff --git a/app/Filament/Resources/ServiceItemResource.php b/app/Filament/Resources/ServiceItemResource.php
+new file mode 100644
+index 0000000..680b991
+--- /dev/null
++++ b/app/Filament/Resources/ServiceItemResource.php
+@@ -0,0 +1,127 @@
++<?php
++
++namespace App\Filament\Resources;
++
++use App\Filament\Resources\ServiceItemResource\Pages;
++use App\Models\ServiceItem;
++use App\Models\ServiceCategory;
++use Filament\Forms;
++use Filament\Forms\Form;
++use Filament\Forms\Components\Select;
++use Filament\Forms\Components\TextInput;
++use Filament\Forms\Components\FileUpload;
++use Filament\Forms\Components\Toggle;
++use Filament\Resources\Resource;
++use Filament\Tables;
++use Filament\Tables\Columns\ImageColumn;
++use Filament\Tables\Columns\TextColumn;
++use Filament\Tables\Columns\ToggleColumn;
++use Filament\Tables\Filters\SelectFilter;
++use Filament\Tables\Table;
++
++class ServiceItemResource extends Resource
++{
++    protected static ?string $model = ServiceItem::class;
++
++    protected static ?string $navigationIcon = 'heroicon-o-sparkles';
++
++    protected static ?string $navigationLabel = 'Dry Cleaning Items';
++
++    protected static ?string $navigationGroup = 'Management';
++
++    protected static ?int $navigationSort = 8;
++
++    public static function form(Form $form): Form
++    {
++        return $form->schema([
++            Select::make('service_category_id')
++                ->label('Service Category')
++                ->options(fn () => ServiceCategory::pluck('name', 'id'))
++                ->required()
++                ->searchable(),
++            TextInput::make('name')
++                ->label('Item Name')
++                ->placeholder('e.g. Shirt, Trousers, Suit (2pc)')
++                ->required()
++                ->maxLength(150),
++            TextInput::make('price_per_piece')
++                ->label('Price per Piece (RM)')
++                ->numeric()
++                ->required()
++                ->minValue(0)
++                ->prefix('RM'),
++            TextInput::make('sort_order')
++                ->label('Display Order')
++                ->numeric()
++                ->default(0)
++                ->helperText('Lower numbers show first in the customer app.'),
++            Toggle::make('is_active')
++                ->label('Active')
++                ->default(true)
++                ->helperText('Inactive items are hidden from the customer app but kept for past order history.'),
++            FileUpload::make('image_path')
++                ->label('Item Photo')
++                ->image()
++                ->disk('s3')
++                // Private, not public — same S3 Block Public Access
++                // reasoning as every other upload in this admin
++                // (BannerResource, etc). Served through
++                // PublicDocumentController::serviceItemImage, never a
++                // raw S3 URL.
++                ->visibility('private')
++                ->maxSize(5120)
++                ->maxFiles(1)
++                ->storeFiles()
++                ->directory('automaid/service-items'),
++        ]);
++    }
++
++    public static function table(Table $table): Table
++    {
++        return $table
++            ->query(ServiceItem::query())
++            ->defaultSort('sort_order')
++            ->columns([
++                ImageColumn::make('image_url')
++                    ->label('')
++                    ->square(),
++                TextColumn::make('category.name')
++                    ->label('Category')
++                    ->badge()
++                    ->sortable(),
++                TextColumn::make('name')
++                    ->searchable()
++                    ->sortable(),
++                TextColumn::make('price_per_piece')
++                    ->label('Price (RM)')
++                    ->money('MYR')
++                    ->sortable(),
++                ToggleColumn::make('is_active')
++                    ->label('Active'),
++                TextColumn::make('created_at')
++                    ->dateTime()
++                    ->toggleable(isToggledHiddenByDefault: true),
++            ])
++            ->filters([
++                SelectFilter::make('service_category_id')
++                    ->label('Category')
++                    ->options(fn () => ServiceCategory::pluck('name', 'id')),
++            ])
++            ->actions([
++                Tables\Actions\EditAction::make(),
++                Tables\Actions\DeleteAction::make(),
++            ])
++            ->bulkActions([
++                Tables\Actions\DeleteBulkAction::make(),
++            ]);
++    }
++
++    public static function getPages(): array
++    {
++        return [
++            'index' => Pages\ListServiceItems::route('/'),
++            'create' => Pages\CreateServiceItem::route('/create'),
++            'edit' => Pages\EditServiceItem::route('/{record}/edit'),
++        ];
++    }
++}
+diff --git a/app/Filament/Resources/ServiceItemResource/Pages/CreateServiceItem.php b/app/Filament/Resources/ServiceItemResource/Pages/CreateServiceItem.php
+new file mode 100644
+index 0000000..403abb6
+--- /dev/null
++++ b/app/Filament/Resources/ServiceItemResource/Pages/CreateServiceItem.php
+@@ -0,0 +1,11 @@
++<?php
++
++namespace App\Filament\Resources\ServiceItemResource\Pages;
++
++use App\Filament\Resources\ServiceItemResource;
++use Filament\Resources\Pages\CreateRecord;
++
++class CreateServiceItem extends CreateRecord
++{
++    protected static string $resource = ServiceItemResource::class;
++}
+diff --git a/app/Filament/Resources/ServiceItemResource/Pages/EditServiceItem.php b/app/Filament/Resources/ServiceItemResource/Pages/EditServiceItem.php
+new file mode 100644
+index 0000000..8da51b1
+--- /dev/null
++++ b/app/Filament/Resources/ServiceItemResource/Pages/EditServiceItem.php
+@@ -0,0 +1,19 @@
++<?php
++
++namespace App\Filament\Resources\ServiceItemResource\Pages;
++
++use App\Filament\Resources\ServiceItemResource;
++use Filament\Actions;
++use Filament\Resources\Pages\EditRecord;
++
++class EditServiceItem extends EditRecord
++{
++    protected static string $resource = ServiceItemResource::class;
++
++    protected function getHeaderActions(): array
++    {
++        return [
++            Actions\DeleteAction::make(),
++        ];
++    }
++}
+diff --git a/app/Filament/Resources/ServiceItemResource/Pages/ListServiceItems.php b/app/Filament/Resources/ServiceItemResource/Pages/ListServiceItems.php
+new file mode 100644
+index 0000000..ea147e5
+--- /dev/null
++++ b/app/Filament/Resources/ServiceItemResource/Pages/ListServiceItems.php
+@@ -0,0 +1,19 @@
++<?php
++
++namespace App\Filament\Resources\ServiceItemResource\Pages;
++
++use App\Filament\Resources\ServiceItemResource;
++use Filament\Actions;
++use Filament\Resources\Pages\ListRecords;
++
++class ListServiceItems extends ListRecords
++{
++    protected static string $resource = ServiceItemResource::class;
++
++    protected function getHeaderActions(): array
++    {
++        return [
++            Actions\CreateAction::make()->label('New Item'),
++        ];
++    }
++}
+diff --git a/app/Filament/Resources/SettingResource/Pages/EditSetting.php b/app/Filament/Resources/SettingResource/Pages/EditSetting.php
+index cda0427..b6ffbf2 100644
+--- a/app/Filament/Resources/SettingResource/Pages/EditSetting.php
++++ b/app/Filament/Resources/SettingResource/Pages/EditSetting.php
+@@ -246,6 +246,44 @@ public function form(Form $form): Form
+                                                     ]),
+                                             ]),
+ 
++                                        Section::make('Dry Cleaning')
++                                            ->schema([
++                                                Grid::make(2)
++                                                    ->schema([
++                                                        TextInput::make('dry_clean_max_items_per_bag')
++                                                            ->label('Max Items per Bag')
++                                                            ->placeholder('e.g., 20')
++                                                            ->required()
++                                                            ->numeric()
++                                                            ->minValue(1)
++                                                            ->helperText('Customer is prompted to split into another bag beyond this.'),
++                                                        TextInput::make('subscription_bronze_dryclean_discount')
++                                                            ->label('Bronze Subscriber Discount (%)')
++                                                            ->placeholder('e.g., 5')
++                                                            ->required()
++                                                            ->numeric()
++                                                            ->minValue(0)
++                                                            ->maxValue(100)
++                                                            ->suffix('%'),
++                                                        TextInput::make('subscription_silver_dryclean_discount')
++                                                            ->label('Silver Subscriber Discount (%)')
++                                                            ->placeholder('e.g., 10')
++                                                            ->required()
++                                                            ->numeric()
++                                                            ->minValue(0)
++                                                            ->maxValue(100)
++                                                            ->suffix('%'),
++                                                        TextInput::make('subscription_platinum_dryclean_discount')
++                                                            ->label('Platinum Subscriber Discount (%)')
++                                                            ->placeholder('e.g., 15')
++                                                            ->required()
++                                                            ->numeric()
++                                                            ->minValue(0)
++                                                            ->maxValue(100)
++                                                            ->suffix('%'),
++                                                    ]),
++                                            ]),
++
+                                     ]),
+                                 
+                                 Grid::make(4)
+diff --git a/app/Http/Controllers/Api/Customer/BookingController.php b/app/Http/Controllers/Api/Customer/BookingController.php
+index eaa5a01..aa417fd 100644
+--- a/app/Http/Controllers/Api/Customer/BookingController.php
++++ b/app/Http/Controllers/Api/Customer/BookingController.php
+@@ -115,6 +115,61 @@ public function calculateDeliveryRate($subscription, $quantity, $price, $total_b
+         return round($price + ($additionalBagCount * $additionalBagRate), 2);
+     }
+ 
++    /**
++     * Prices a dry-clean bag: sum(item price × quantity) — never
++     * trusting client-sent prices, always looking up the current
++     * ServiceItem.price_per_piece — then applies the subscriber's
++     * per-tier percentage discount (Settings > Dry Cleaning). Unlike
++     * the Wash & Fold free-bag benefit, this is a straight percentage
++     * off, not a quota — every dry-clean order gets it for as long as
++     * the subscription is active, no cycle usage tracked.
++     *
++     * @param  array        $items        [{service_item_id, quantity}, ...]
++     * @param  Subscription|null $subscription
++     * @param  Setting      $setting
++     * @return array [subtotal_after_discount, items_snapshot, discount_percent_applied]
++     */
++    public function calculateDryCleanCharge(array $items, $subscription, $setting)
++    {
++        $itemIds = collect($items)->pluck('service_item_id')->unique();
++        $catalog = \App\Models\ServiceItem::whereIn('id', $itemIds)->get()->keyBy('id');
++
++        $snapshot = [];
++        $subtotal = 0;
++        foreach ($items as $item) {
++            $serviceItem = $catalog->get($item['service_item_id']);
++            if (!$serviceItem) {
++                continue; // unknown/deleted item — silently skipped rather than failing the whole booking
++            }
++            $quantity = (int) $item['quantity'];
++            $unitPrice = (float) $serviceItem->price_per_piece;
++            $lineTotal = round($unitPrice * $quantity, 2);
++            $subtotal += $lineTotal;
++
++            $snapshot[] = [
++                'service_item_id' => $serviceItem->id,
++                'name' => $serviceItem->name,
++                'quantity' => $quantity,
++                'unit_price' => $unitPrice,
++                'subtotal' => $lineTotal,
++            ];
++        }
++
++        $discountPercent = 0;
++        if ($subscription && $subscription->status === \App\Models\Subscription::ACTIVE) {
++            $discountPercent = match ($subscription->plan_code) {
++                \App\Models\Subscription::BRONZE => (float) ($setting->subscription_bronze_dryclean_discount ?? 0),
++                \App\Models\Subscription::SILVER => (float) ($setting->subscription_silver_dryclean_discount ?? 0),
++                \App\Models\Subscription::PLATINUM => (float) ($setting->subscription_platinum_dryclean_discount ?? 0),
++                default => 0,
++            };
++        }
++
++        $discountedTotal = round($subtotal * (1 - ($discountPercent / 100)), 2);
++
++        return [$discountedTotal, $snapshot, $discountPercent];
++    }
++
+     /**
+      * [calculateRate description]
+      * @param  Request $request [description]
+@@ -387,6 +442,63 @@ public function addOnList(Request $request)
+     }
+ 
+ 
++    /**
++     * Dry-cleaning catalog for the item-selection screen — every
++     * active category with its active items, plus this customer's
++     * subscriber discount percent (if any) so the app can show
++     * "10% off with your Silver plan" style pricing before checkout,
++     * without a second round-trip.
++     * @param  Request $request [description]
++     * @return [type]           [description]
++     */
++    public function serviceCategoryList(Request $request)
++    {
++        try {
++            $user = auth('sanctum')->user();
++            if (!$user) {
++                return response()->json([
++                    'status' => false,
++                    'message' => 'User not found.',
++                ]);
++            }
++
++            $setting = Setting::find(1);
++            $subscription = $user->subscribe;
++            $discountPercent = 0;
++            if ($subscription && $subscription->status === \App\Models\Subscription::ACTIVE) {
++                $discountPercent = match ($subscription->plan_code) {
++                    \App\Models\Subscription::BRONZE => (float) ($setting->subscription_bronze_dryclean_discount ?? 0),
++                    \App\Models\Subscription::SILVER => (float) ($setting->subscription_silver_dryclean_discount ?? 0),
++                    \App\Models\Subscription::PLATINUM => (float) ($setting->subscription_platinum_dryclean_discount ?? 0),
++                    default => 0,
++                };
++            }
++
++            $categories = \App\Models\ServiceCategory::where('is_active', true)
++                ->with(['items' => function ($q) {
++                    $q->where('is_active', true);
++                }])
++                ->get();
++
++            return response()->json([
++                'status' => true,
++                'message' => 'Successfully retrieved service categories.',
++                'data' => [
++                    'categories' => $categories,
++                    'subscriber_discount_percent' => $discountPercent,
++                    'max_items_per_bag' => $setting->dry_clean_max_items_per_bag ?? 20,
++                ],
++            ]);
++
++        } catch (\Throwable $th) {
++            return response()->json([
++                'status' => false,
++                'message' => $th->getMessage(),
++            ],500);
++        }
++    }
++
++
+     /**
+      * [getAddOn description]
+      * @param  Request $request [description]
+@@ -483,6 +595,37 @@ public function schedule(Request $request)
+             // ----------------
+             $setting = Setting::find(1);
+ 
++            // Dry-cleaning items — validated here (not in the main
++            // Validator::make above) since the max-items-per-bag limit
++            // is an admin-configurable Setting value, not a fixed rule.
++            // Wash & Fold bookings (no service_category_id) skip this
++            // entirely and behave exactly as before.
++            $dryCleanItems = null;
++            $dryCleanDiscountPercent = null;
++            if ($request->filled('service_category_id')) {
++                $itemsValidate = Validator::make($request->all(), [
++                    'items' => 'required|array|min:1',
++                    'items.*.service_item_id' => 'required|integer',
++                    'items.*.quantity' => 'required|integer|min:1',
++                ]);
++                if ($itemsValidate->fails()) {
++                    return response()->json([
++                        'status' => false,
++                        'message' => 'validation error',
++                        'errors' => $itemsValidate->errors(),
++                    ]);
++                }
++
++                $totalQuantity = collect($request->items)->sum('quantity');
++                $maxPerBag = $setting->dry_clean_max_items_per_bag ?? 20;
++                if ($totalQuantity > $maxPerBag) {
++                    return response()->json([
++                        'status' => false,
++                        'message' => "This bag can hold up to {$maxPerBag} items — please split into another bag.",
++                    ]);
++                }
++            }
++
+             // get pickup address
+             $pickup = Address::find($request->pickup_location_id);
+             if (!$pickup) {
+@@ -576,7 +719,11 @@ public function schedule(Request $request)
+             // the client (a client-sent washing_charge/delivery_charge
+             // here previously went straight into the order unchecked).
+             $delivery_charge = $this->calculateDeliveryRate($is_subscribe, $request->pickup_bag_quantity, $setting->delivery_price, $setting->total_bag_free_delivery);
+-            $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
++            if ($request->filled('service_category_id')) {
++                [$washing_charge, $dryCleanItems, $dryCleanDiscountPercent] = $this->calculateDryCleanCharge($request->items, $subscription, $setting);
++            } else {
++                $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
++            }
+             $addon_charge = $request->addon_charge ?? 0;
+             $discount = $request->discount ?? 0;
+ 
+@@ -865,6 +1012,9 @@ public function schedule(Request $request)
+                     'delivery_charge' => $delivery_charge ?? 0,
+                     'tax' => $tax_charge ?? 0,
+                     'grand_total' => $grand_total,
++                    'service_category_id' => $request->service_category_id ?? null,
++                    'items' => $dryCleanItems ? json_encode($dryCleanItems) : null,
++                    'dry_clean_discount_percent' => $dryCleanDiscountPercent ?? null,
+                 ]
+             );
+ 
+@@ -893,6 +1043,9 @@ public function schedule(Request $request)
+                         'tax' => $tax_charge ?? 0,
+                         'grand_total' => $grand_total,
+                         'status' => ($is_subscribe && $addon_charge == 0 && $tax_charge == 0 || $is_zero) ? Booking::ACTIVE : Booking::PENDING, 
++                        'service_category_id' => $request->service_category_id ?? null,
++                        'items' => $dryCleanItems ? json_encode($dryCleanItems) : null,
++                        'dry_clean_discount_percent' => $dryCleanDiscountPercent ?? null,
+                     ]
+                 );
+ 
+diff --git a/app/Http/Controllers/PublicDocumentController.php b/app/Http/Controllers/PublicDocumentController.php
+index 1d6b882..00c6ad7 100644
+--- a/app/Http/Controllers/PublicDocumentController.php
++++ b/app/Http/Controllers/PublicDocumentController.php
+@@ -148,6 +148,28 @@ public function bannerImage(string $hashslug): Response
+         ]);
+     }
+ 
++    /**
++     * Serves a dry-cleaning catalog item's photo — same reasoning as
++     * bannerImage() above: the catalog is small and changes rarely,
++     * shown on every item-selection screen load.
++     */
++    public function serviceItemImage(string $hashslug): Response
++    {
++        $item = \App\Models\ServiceItem::where('hashslug', $hashslug)->first();
++
++        if (!$item || !$item->image_path || !Storage::disk('s3')->exists($item->image_path)) {
++            abort(404, 'Image not found.');
++        }
++
++        $contents = Storage::disk('s3')->get($item->image_path);
++        $mime = Storage::disk('s3')->mimeType($item->image_path) ?? 'image/jpeg';
++
++        return response($contents, 200, [
++            'Content-Type' => $mime,
++            'Cache-Control' => 'public, max-age=86400',
++        ]);
++    }
++
+     /**
+      * Serves a support ticket's attached photo — same S3 Block Public
+      * Access reasoning as the other proxy methods above.
+diff --git a/app/Http/Controllers/Webhook/FiuuController.php b/app/Http/Controllers/Webhook/FiuuController.php
+index 80a104c..fdc874c 100644
+--- a/app/Http/Controllers/Webhook/FiuuController.php
++++ b/app/Http/Controllers/Webhook/FiuuController.php
+@@ -365,6 +365,9 @@ public function getNotification(Request $request)
+                             'tax' => $order_booking->tax,
+                             'grand_total' => $order_booking->grand_total,
+                             'status' => Booking::ACTIVE,
++                            'service_category_id' => $order_booking->service_category_id,
++                            'items' => $order_booking->items,
++                            'dry_clean_discount_percent' => $order_booking->dry_clean_discount_percent,
+                         ]
+                     );
+ 
+@@ -866,6 +869,9 @@ public function getCallback(Request $request)
+                             'tax' => $order_booking->tax,
+                             'grand_total' => $order_booking->grand_total,
+                             'status' => Booking::ACTIVE,
++                            'service_category_id' => $order_booking->service_category_id,
++                            'items' => $order_booking->items,
++                            'dry_clean_discount_percent' => $order_booking->dry_clean_discount_percent,
+                         ]
+                     );
+ 
+diff --git a/app/Models/Booking.php b/app/Models/Booking.php
+index c44371a..42688a7 100644
+--- a/app/Models/Booking.php
++++ b/app/Models/Booking.php
+@@ -33,6 +33,7 @@ class Booking extends Model implements Auditable
+      */
+     protected $casts = [
+         'pickup_date' => 'datetime',
++        'items' => 'array',
+     ];
+ 
+     /**
+@@ -116,6 +117,16 @@ public function order()
+         return $this->belongsTo(\App\Models\Order::class);
+     }
+ 
++    /**
++     * Null for a Wash & Fold booking (the default/original behavior) —
++     * only set for dry-cleaning (and future per-item-priced) bookings.
++     * @return [type] [description]
++     */
++    public function service_category()
++    {
++        return $this->belongsTo(\App\Models\ServiceCategory::class);
++    }
++
+     /**
+      * [pickup_location description]
+      * @return [type] [description]
+diff --git a/app/Models/OrderBooking.php b/app/Models/OrderBooking.php
+index c0f762b..0089951 100755
+--- a/app/Models/OrderBooking.php
++++ b/app/Models/OrderBooking.php
+@@ -16,6 +16,10 @@ class OrderBooking extends Model implements Auditable
+     protected $guarded = ['id'];
+     protected $table = 'order_bookings';
+ 
++    protected $casts = [
++        'items' => 'array',
++    ];
++
+     /**
+      * [booted description]
+      * @return [type] [description]
+diff --git a/app/Models/ServiceCategory.php b/app/Models/ServiceCategory.php
+new file mode 100644
+index 0000000..af9aeac
+--- /dev/null
++++ b/app/Models/ServiceCategory.php
+@@ -0,0 +1,50 @@
++<?php
++
++namespace App\Models;
++
++use Illuminate\Database\Eloquent\Model;
++use Illuminate\Database\Eloquent\SoftDeletes;
++use Guava\Sqids\Facades\Sqids;
++
++class ServiceCategory extends Model
++{
++    use SoftDeletes;
++
++    protected $guarded = ['id'];
++    protected $table = 'service_categories';
++
++    // Matches automaid_merchantrider_scaffold's
++    // register_merchant_screen.dart _serviceCategoryOptions exactly —
++    // merchant capability matching (merchants.service_categories JSON
++    // contains this string) depends on these staying identical.
++    const DRY_CLEANING = 'Dry Cleaning';
++    const SHOE_CLEANING = 'Shoe Cleaning';
++    const HELMET_CLEANING = 'Helmet Cleaning';
++    const WASH_AND_DRY = 'Wash & Dry';
++
++    /**
++     * [booted description]
++     * @return [type] [description]
++     */
++    protected static function booted()
++    {
++        static::creating(function ($model) {
++            $hashids = Sqids::make()->alphabet(config('services.sqids.alphabet'))->minLength(15)->salt('service_categories');
++            do {
++                $uniqueValue = strtotime(now()) . random_int(1, 999999);
++                $hashslug = $hashids->encode([$uniqueValue]);
++            }
++            while (self::where('hashslug', $hashslug)->exists());
++            $model->hashslug = $hashslug;
++        });
++    }
++
++    /**
++     * [items description]
++     * @return [type] [description]
++     */
++    public function items()
++    {
++        return $this->hasMany(\App\Models\ServiceItem::class)->orderBy('sort_order');
++    }
++}
+diff --git a/app/Models/ServiceItem.php b/app/Models/ServiceItem.php
+new file mode 100644
+index 0000000..c4c05ef
+--- /dev/null
++++ b/app/Models/ServiceItem.php
+@@ -0,0 +1,51 @@
++<?php
++
++namespace App\Models;
++
++use Illuminate\Database\Eloquent\Model;
++use Illuminate\Database\Eloquent\SoftDeletes;
++use Guava\Sqids\Facades\Sqids;
++
++class ServiceItem extends Model
++{
++    use SoftDeletes;
++
++    protected $guarded = ['id'];
++    protected $table = 'service_items';
++
++    /**
++     * [booted description]
++     * @return [type] [description]
++     */
++    protected static function booted()
++    {
++        static::creating(function ($model) {
++            $hashids = Sqids::make()->alphabet(config('services.sqids.alphabet'))->minLength(15)->salt('service_items');
++            do {
++                $uniqueValue = strtotime(now()) . random_int(1, 999999);
++                $hashslug = $hashids->encode([$uniqueValue]);
++            }
++            while (self::where('hashslug', $hashslug)->exists());
++            $model->hashslug = $hashslug;
++        });
++    }
++
++    /**
++     * [category description]
++     * @return [type] [description]
++     */
++    public function category()
++    {
++        return $this->belongsTo(\App\Models\ServiceCategory::class, 'service_category_id');
++    }
++
++    /**
++     * Proxied through PublicDocumentController, same as every other
++     * uploaded image in this app — S3 has Block Public Access enabled.
++     * @return [type] [description]
++     */
++    public function getImageUrlAttribute()
++    {
++        return $this->image_path ? route('documents.service-item-image', $this->hashslug) : null;
++    }
++}
+diff --git a/database/migrations/2026_09_07_090000_create_service_categories_table.php b/database/migrations/2026_09_07_090000_create_service_categories_table.php
+new file mode 100644
+index 0000000..db0471f
+--- /dev/null
++++ b/database/migrations/2026_09_07_090000_create_service_categories_table.php
+@@ -0,0 +1,44 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::create('service_categories', function (Blueprint $table) {
++            $table->id();
++            $table->string('hashslug', 20)->unique();
++            $table->string('name', 100); // "Dry Cleaning", "Shoe Cleaning", etc — must match merchants.service_categories' string values exactly
++            $table->string('slug', 100)->unique();
++            $table->boolean('is_active')->default(true);
++            $table->unsignedInteger('created_by')->index()->nullable();
++            $table->unsignedInteger('updated_by')->index()->nullable();
++            $table->softDeletes();
++            $table->timestamps();
++        });
++
++        // Seeded directly here rather than left for admin to create —
++        // these 4 names must match register_merchant_screen.dart's
++        // _serviceCategoryOptions exactly for merchant capability
++        // matching to work, so they're fixed data, not admin-authored
++        // content. Only "Dry Cleaning" gets a per-piece item catalog
++        // for now (the other 3 aren't being launched with this feature);
++        // is_active lets admin quietly enable one later without a
++        // migration once its own item catalog exists.
++        $now = now();
++        \Illuminate\Support\Facades\DB::table('service_categories')->insert([
++            ['hashslug' => \Illuminate\Support\Str::random(15), 'name' => 'Dry Cleaning', 'slug' => 'dry-cleaning', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
++            ['hashslug' => \Illuminate\Support\Str::random(15), 'name' => 'Shoe Cleaning', 'slug' => 'shoe-cleaning', 'is_active' => false, 'created_at' => $now, 'updated_at' => $now],
++            ['hashslug' => \Illuminate\Support\Str::random(15), 'name' => 'Helmet Cleaning', 'slug' => 'helmet-cleaning', 'is_active' => false, 'created_at' => $now, 'updated_at' => $now],
++            ['hashslug' => \Illuminate\Support\Str::random(15), 'name' => 'Wash & Dry', 'slug' => 'wash-and-dry', 'is_active' => false, 'created_at' => $now, 'updated_at' => $now],
++        ]);
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('service_categories');
++    }
++};
+diff --git a/database/migrations/2026_09_07_090001_create_service_items_table.php b/database/migrations/2026_09_07_090001_create_service_items_table.php
+new file mode 100644
+index 0000000..d79d1a0
+--- /dev/null
++++ b/database/migrations/2026_09_07_090001_create_service_items_table.php
+@@ -0,0 +1,31 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::create('service_items', function (Blueprint $table) {
++            $table->id();
++            $table->string('hashslug', 20)->unique();
++            $table->unsignedInteger('service_category_id')->index();
++            $table->string('name', 150); // "Shirt", "Trousers", "Suit (2pc)", "Dress"
++            $table->decimal('price_per_piece', 8, 2);
++            $table->string('image_path', 250)->nullable();
++            $table->unsignedInteger('sort_order')->default(0);
++            $table->boolean('is_active')->default(true);
++            $table->unsignedInteger('created_by')->index()->nullable();
++            $table->unsignedInteger('updated_by')->index()->nullable();
++            $table->softDeletes();
++            $table->timestamps();
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('service_items');
++    }
++};
+diff --git a/database/migrations/2026_09_07_090002_add_dry_clean_fields_bookings_order_bookings_tables.php b/database/migrations/2026_09_07_090002_add_dry_clean_fields_bookings_order_bookings_tables.php
+new file mode 100644
+index 0000000..b1d7325
+--- /dev/null
++++ b/database/migrations/2026_09_07_090002_add_dry_clean_fields_bookings_order_bookings_tables.php
+@@ -0,0 +1,46 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        foreach (['bookings', 'order_bookings'] as $tableName) {
++            Schema::table($tableName, function (Blueprint $table) use ($tableName) {
++                if (!Schema::hasColumn($tableName, 'service_category_id')) {
++                    $table->unsignedInteger('service_category_id')->index()->nullable()->after('grand_total');
++                }
++                if (!Schema::hasColumn($tableName, 'items')) {
++                    // Snapshot of {service_item_id, name, quantity, unit_price, subtotal}
++                    // at order time — deliberately a JSON snapshot rather than a
++                    // normalized line-items table, since prices must stay frozen
++                    // to what the customer was actually charged even if the
++                    // catalog price changes later, and this app has no existing
++                    // pattern of normalized order line items to extend anyway
++                    // (order_addons is a single free-text string field, not a
++                    // structured cart).
++                    $table->json('items')->nullable()->after('service_category_id');
++                }
++                if (!Schema::hasColumn($tableName, 'dry_clean_discount_percent')) {
++                    $table->decimal('dry_clean_discount_percent', 5, 2)->nullable()->after('items');
++                }
++            });
++        }
++    }
++
++    public function down(): void
++    {
++        foreach (['bookings', 'order_bookings'] as $tableName) {
++            Schema::table($tableName, function (Blueprint $table) use ($tableName) {
++                foreach (['dry_clean_discount_percent', 'items', 'service_category_id'] as $column) {
++                    if (Schema::hasColumn($tableName, $column)) {
++                        $table->dropColumn($column);
++                    }
++                }
++            });
++        }
++    }
++};
+diff --git a/database/migrations/2026_09_07_090003_add_dry_clean_settings_fields.php b/database/migrations/2026_09_07_090003_add_dry_clean_settings_fields.php
+new file mode 100644
+index 0000000..2034516
+--- /dev/null
++++ b/database/migrations/2026_09_07_090003_add_dry_clean_settings_fields.php
+@@ -0,0 +1,42 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::table('settings', function (Blueprint $table) {
++            if (!Schema::hasColumn('settings', 'dry_clean_max_items_per_bag')) {
++                $table->unsignedInteger('dry_clean_max_items_per_bag')->default(20);
++            }
++            if (!Schema::hasColumn('settings', 'subscription_bronze_dryclean_discount')) {
++                $table->decimal('subscription_bronze_dryclean_discount', 5, 2)->default(5.00);
++            }
++            if (!Schema::hasColumn('settings', 'subscription_silver_dryclean_discount')) {
++                $table->decimal('subscription_silver_dryclean_discount', 5, 2)->default(10.00);
++            }
++            if (!Schema::hasColumn('settings', 'subscription_platinum_dryclean_discount')) {
++                $table->decimal('subscription_platinum_dryclean_discount', 5, 2)->default(15.00);
++            }
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('settings', function (Blueprint $table) {
++            foreach ([
++                'subscription_platinum_dryclean_discount',
++                'subscription_silver_dryclean_discount',
++                'subscription_bronze_dryclean_discount',
++                'dry_clean_max_items_per_bag',
++            ] as $column) {
++                if (Schema::hasColumn('settings', $column)) {
++                    $table->dropColumn($column);
++                }
++            }
++        });
++    }
++};
+diff --git a/routes/api.php b/routes/api.php
+index 3e4fc27..8f3452d 100644
+--- a/routes/api.php
++++ b/routes/api.php
+@@ -143,6 +143,7 @@
+ 		Route::post('/booking/calculate/rate', [\App\Http\Controllers\Api\Customer\BookingController::class, 'calculateRate']);		
+ 		Route::post('/booking/addon', [\App\Http\Controllers\Api\Customer\BookingController::class, 'getAddOn']);		
+ 		Route::post('/booking/addon/lists', [\App\Http\Controllers\Api\Customer\BookingController::class, 'addOnList']);		
++		Route::post('/booking/service-category/lists', [\App\Http\Controllers\Api\Customer\BookingController::class, 'serviceCategoryList']);
+ 		Route::post('/booking/voucher', [\App\Http\Controllers\Api\Customer\BookingController::class, 'checkVoucher']);		
+ 		Route::post('/booking/voucher/lists', [\App\Http\Controllers\Api\Customer\BookingController::class, 'voucherList']);		
+ 		Route::post('/booking/qrcodes', [\App\Http\Controllers\Api\Customer\BookingController::class, 'qrcodeList']);		
+diff --git a/routes/web.php b/routes/web.php
+index 0c7ce6c..f9b9d29 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -55,6 +55,8 @@
+     ->name('documents.landmark-picture');
+ Route::get('/documents/banner-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'bannerImage'])
+     ->name('documents.banner-image');
++Route::get('/documents/service-item-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'serviceItemImage'])
++    ->name('documents.service-item-image');
+ Route::get('/documents/ticket-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'ticketImage'])
+     ->name('documents.ticket-image');
+ Route::get('/documents/announcement-image/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'announcementImage'])

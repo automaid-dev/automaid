@@ -511,8 +511,37 @@ class SubscriptionController extends Controller
                     Order::SUBSCRIPTION_UPDATE,
                     Order::SUBSCRIPTION_UPGRADE,
                 ])
+                ->with('subscription')
                 ->orderByDesc('id')
                 ->get();
+
+            // Every Subscription row this customer has ever had, most
+            // recent first — a fresh row gets created each time they
+            // (re)subscribe or upgrade (see Subscription::firstOrCreate
+            // keyed by order_id throughout this controller), so a
+            // customer who cancelled and later resubscribed has more
+            // than one.
+            $subscriptions = \App\Models\Subscription::where('user_id', $user->id)
+                ->orderByDesc('id')
+                ->get();
+
+            // `subscription` (initial) and `subscription_upgrade` orders
+            // each create their OWN Subscription row (order.subscription
+            // above resolves directly), so those get their exact,
+            // correct lifecycle status. `subscription_renewal` and
+            // `subscription_update` orders never create a Subscription
+            // row of their own — they're just a payment/card-update
+            // against an existing one — so for those we attach whichever
+            // subscription lifecycle they actually belong to: the most
+            // recent Subscription created at or before this order.
+            $orders->each(function ($order) use ($subscriptions) {
+                if ($order->subscription) {
+                    $order->subscription_status = $order->subscription->status;
+                    return;
+                }
+                $matching = $subscriptions->first(fn ($s) => $s->order_id <= $order->id);
+                $order->subscription_status = $matching->status ?? null;
+            });
 
             return response()->json([
                 'status' => true,

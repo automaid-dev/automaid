@@ -1,0 +1,48 @@
+diff --git a/app/Http/Controllers/Api/Customer/SubscriptionController.php b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+index f0139e0..0720f3d 100644
+--- a/app/Http/Controllers/Api/Customer/SubscriptionController.php
++++ b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+@@ -187,12 +187,20 @@ public function placeOrder(Request $request)
+                 // payment — any other channel (eWallet, FPX, etc.)
+                 // can't be auto-charged for renewal, so subscription
+                 // purchases are restricted to card only at checkout.
+-                'channel' => 'CC',
++                //
++                // 'CC' was the value here previously — that's Fiuu's
++                // Direct Server Integration TxnChannel code, a
++                // different API entirely. The Hosted Integration
++                // `channel` parameter this method actually calls uses
++                // 'credit' for Visa/Mastercard/JCB (per Fiuu's own
++                // Hosted Integration Channel Lists docs) — 'CC' isn't
++                // a recognized value here, so the gateway silently
++                // ignored the restriction and showed every payment
++                // method, which is why card-only was never actually
++                // enforced despite this comment already describing the
++                // intent correctly.
++                'channel' => 'credit',
+             ]);
+-
+-            // return payment url (+ order_id so the app can verify
+-            // payment status afterwards instead of just trusting the
+-            // gateway redirect blindly)
+             $data['url'] = $paymentUrl;
+             $data['order_id'] = $order->id;
+             return response()->json([
+@@ -336,7 +344,7 @@ public function upgrade(Request $request)
+                 'currency' => 'MYR',
+                 // See the matching comment on the initial subscribe
+                 // flow — recurring only works with card.
+-                'channel' => 'CC',
++                'channel' => 'credit',
+             ]);
+ 
+             $data['url'] = $paymentUrl;
+@@ -455,7 +463,7 @@ public function updateSubscription(Request $request)
+                 'currency' => 'MYR',
+                 // See the matching comment on the initial subscribe
+                 // flow — recurring only works with card.
+-                'channel' => 'CC',
++                'channel' => 'credit',
+             ]);
+ 
+             // return payment url (+ order_id so the app can verify

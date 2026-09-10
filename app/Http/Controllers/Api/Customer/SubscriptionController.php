@@ -187,12 +187,20 @@ class SubscriptionController extends Controller
                 // payment — any other channel (eWallet, FPX, etc.)
                 // can't be auto-charged for renewal, so subscription
                 // purchases are restricted to card only at checkout.
-                'channel' => 'CC',
+                //
+                // 'CC' was the value here previously — that's Fiuu's
+                // Direct Server Integration TxnChannel code, a
+                // different API entirely. The Hosted Integration
+                // `channel` parameter this method actually calls uses
+                // 'credit' for Visa/Mastercard/JCB (per Fiuu's own
+                // Hosted Integration Channel Lists docs) — 'CC' isn't
+                // a recognized value here, so the gateway silently
+                // ignored the restriction and showed every payment
+                // method, which is why card-only was never actually
+                // enforced despite this comment already describing the
+                // intent correctly.
+                'channel' => 'credit',
             ]);
-
-            // return payment url (+ order_id so the app can verify
-            // payment status afterwards instead of just trusting the
-            // gateway redirect blindly)
             $data['url'] = $paymentUrl;
             $data['order_id'] = $order->id;
             return response()->json([
@@ -336,7 +344,7 @@ class SubscriptionController extends Controller
                 'currency' => 'MYR',
                 // See the matching comment on the initial subscribe
                 // flow — recurring only works with card.
-                'channel' => 'CC',
+                'channel' => 'credit',
             ]);
 
             $data['url'] = $paymentUrl;
@@ -455,7 +463,7 @@ class SubscriptionController extends Controller
                 'currency' => 'MYR',
                 // See the matching comment on the initial subscribe
                 // flow — recurring only works with card.
-                'channel' => 'CC',
+                'channel' => 'credit',
             ]);
 
             // return payment url (+ order_id so the app can verify

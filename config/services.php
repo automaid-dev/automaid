@@ -78,6 +78,20 @@ return [
         'environment' => env('FIUU_ENVIRONMENT', 'sandbox'),
     ],
 
+    'gkash' => [
+        // Live API host per the merchant onboarding email. GKash's demo
+        // credentials were issued without a separate documented sandbox
+        // API host — worth confirming with merchantsupport@gkash.com
+        // whether this exact host is safe to test against with demo
+        // credentials, or whether a distinct sandbox host exists, before
+        // relying on GKASH_ENVIRONMENT=sandbox alone to keep test
+        // transactions harmless.
+        'base_url' => env('GKASH_BASE_URL', 'https://api.gkash.my'),
+        'merchant_id' => env('GKASH_MERCHANT_ID'),
+        'signature_key' => env('GKASH_SIGNATURE_KEY'),
+        'environment' => env('GKASH_ENVIRONMENT', 'sandbox'),
+    ],
+
     'rms' => [
         'merchant_id' => env('RMS_MERCHANT_ID', 'SB_payandwash'),
         'sub_merchant_id' => env('RMS_SUB_MERCHANT_ID', 'SB_payandwash'),

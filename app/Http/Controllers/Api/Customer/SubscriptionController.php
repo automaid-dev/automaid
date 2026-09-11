@@ -173,9 +173,20 @@ class SubscriptionController extends Controller
                 ]
             );
 
+            // Locked in now, at signup — the monthly renewal job and
+            // any future upgrade/card-update on this subscription read
+            // THIS column from here on, never the live Setting. This
+            // is what lets an existing Fiuu subscriber keep recurring
+            // on Fiuu even after admin switches new signups to GKash.
+            $gatewayCode = $setting->payment_gateway_subscription;
+            $subscription->payment_gateway = $gatewayCode;
+            $subscription->save();
+            $order->payment_gateway = $gatewayCode;
+            $order->save();
+
             // create payment
-            $rms = new FiuuPaymentService();
-            $paymentUrl = $rms->getPaymentUrl([
+            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
+            $paymentUrl = $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
                 'bill_name' => $order->billing_name,
@@ -187,6 +198,10 @@ class SubscriptionController extends Controller
                 // payment — any other channel (eWallet, FPX, etc.)
                 // can't be auto-charged for renewal, so subscription
                 // purchases are restricted to card only at checkout.
+                // Ignored by GkashPaymentService (GKash isn't used for
+                // subscriptions yet — payment_gateway_subscription is
+                // locked to 'fiuu' in the admin form until GKash
+                // recurring billing exists).
                 //
                 // 'CC' was the value here previously — that's Fiuu's
                 // Direct Server Integration TxnChannel code, a
@@ -200,6 +215,14 @@ class SubscriptionController extends Controller
                 // enforced despite this comment already describing the
                 // intent correctly.
                 'channel' => 'credit',
+                // Ignored by FiuuPaymentService (Fiuu has no such
+                // param) — tells GkashPaymentService to tokenize the
+                // card for recurring billing per
+                // doc.gkash.my/v2/recurring-payments, rather than a
+                // one-off charge. 'MONTHLY' is a best-effort guess, not
+                // confirmed against GKash's actual enum — see the
+                // matching comment in CheckNextPaymentSubscription.php.
+                'recurringtype' => 'MONTHLY',
             ]);
             $data['url'] = $paymentUrl;
             $data['order_id'] = $order->id;
@@ -332,9 +355,17 @@ class SubscriptionController extends Controller
                 ]
             );
 
-            // create payment
-            $rms = new FiuuPaymentService();
-            $paymentUrl = $rms->getPaymentUrl([
+            // create payment — same gateway this subscription was
+            // originally locked to at signup, never the live setting.
+            // An upgrade is still the same ongoing subscriber
+            // relationship (and, once GKash recurring exists, the same
+            // stored recurring token), so it must never silently move
+            // to a different gateway mid-lifecycle.
+            $order->payment_gateway = $subscription->payment_gateway;
+            $order->save();
+
+            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
+            $paymentUrl = $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
                 'bill_name' => $order->billing_name,
@@ -448,12 +479,20 @@ class SubscriptionController extends Controller
                     'start_at' => $subscription->start_at,
                     'renew_at' => $subscription->renew_at,
                     'previous_id' => $subscription->id,
+                    // Inherited, not re-resolved from the live setting
+                    // — this is still the same subscriber lifecycle,
+                    // just refreshing the payment method/card token.
+                    'payment_gateway' => $subscription->payment_gateway,
                 ]
             );
 
-            // create payment
-            $rms = new FiuuPaymentService();
-            $paymentUrl = $rms->getPaymentUrl([
+            // create payment — locked gateway, same reasoning as the
+            // upgrade flow above.
+            $order->payment_gateway = $subscription->payment_gateway;
+            $order->save();
+
+            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
+            $paymentUrl = $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
                 'bill_name' => $order->billing_name,

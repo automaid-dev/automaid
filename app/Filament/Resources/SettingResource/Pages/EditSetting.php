@@ -284,6 +284,47 @@ class EditSetting extends EditRecord
                                                     ]),
                                             ]),
 
+                                        Section::make('Payment Gateway')
+                                            ->description('Choose which gateway processes each type of payment. Existing subscribers keep recurring on whichever gateway they originally signed up under, even after this is switched — only new subscriptions follow this setting.')
+                                            ->schema([
+                                                Grid::make(2)
+                                                    ->schema([
+                                                        Select::make('payment_gateway_booking')
+                                                            ->label('Booking (Wash & Fold)')
+                                                            ->options([
+                                                                'fiuu' => 'Fiuu',
+                                                                'gkash' => 'GKash',
+                                                            ])
+                                                            ->required()
+                                                            ->native(false),
+                                                        Select::make('payment_gateway_dry_cleaning')
+                                                            ->label('Dry Cleaning')
+                                                            ->options([
+                                                                'fiuu' => 'Fiuu',
+                                                                'gkash' => 'GKash',
+                                                            ])
+                                                            ->required()
+                                                            ->native(false),
+                                                        Select::make('payment_gateway_bag_purchase')
+                                                            ->label('Bag Purchase')
+                                                            ->options([
+                                                                'fiuu' => 'Fiuu',
+                                                                'gkash' => 'GKash',
+                                                            ])
+                                                            ->required()
+                                                            ->native(false),
+                                                        Select::make('payment_gateway_subscription')
+                                                            ->label('Subscription (new signups only)')
+                                                            ->options([
+                                                                'fiuu' => 'Fiuu',
+                                                                'gkash' => 'GKash',
+                                                            ])
+                                                            ->required()
+                                                            ->native(false)
+                                                            ->helperText('Existing subscribers keep recurring on whichever gateway they originally signed up under, even after this changes.'),
+                                                    ]),
+                                            ]),
+
                                     ]),
                                 
                                 Grid::make(4)

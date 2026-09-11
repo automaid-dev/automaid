@@ -9,6 +9,7 @@ use App\Models\Subscription;
 use App\Models\Transaction;
 use App\Services\OneSignalService;
 use App\Services\PaymentGateway\FiuuPaymentService;
+use App\Services\PaymentGateway\GkashPaymentService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -78,12 +79,52 @@ class CheckNextPaymentSubscription extends Command
                     // have token
                     if ($token) {
 
-                        // call payment recurring
-                        $rms = new FiuuPaymentService();
-                        $data_rec = $rms->getPaymentRequest($order, $token);
+                        // Branch by which gateway this subscription was
+                        // locked to at signup (see subscriptions.payment_gateway
+                        // and the matching comments in SubscriptionController) —
+                        // never the live admin setting, so an existing
+                        // subscriber keeps recurring on whatever gateway
+                        // they actually signed up under.
+                        if ($subscription->payment_gateway === 'gkash') {
+                            $gkash = new GkashPaymentService();
+
+                            // Must be unique per charge attempt (GKash's
+                            // docs show a different v_cartid on every
+                            // recurring call) — order id + a timestamp
+                            // suffix keeps it traceable back to the
+                            // parent order while staying unique.
+                            $cartId = $order->id . '-' . now()->format('YmdHis');
+
+                            $result = $gkash->chargeRecurring(
+                                $token,
+                                $order->grand_total,
+                                $cartId,
+                                // Best-effort guess — GKash's docs only
+                                // showed "ANNUAL" as an example
+                                // recurringtype value; confirm the exact
+                                // enum for a monthly cycle with GKash
+                                // support before relying on this in
+                                // production. A rejected value fails
+                                // safely (the charge just doesn't go
+                                // through) rather than charging wrong.
+                                'MONTHLY'
+                            );
+
+                            $isAccepted = $result['success'];
+                            $newToken = $result['epkey'] ?? $token; // fall back to the old token rather than null if GKash didn't return one — better a possibly-stale token than losing recurring entirely
+                            $responseData = $result['raw'];
+                        } else {
+                            // call payment recurring
+                            $rms = new FiuuPaymentService();
+                            $data_rec = $rms->getPaymentRequest($order, $token);
+
+                            $isAccepted = ($data_rec[0]['status'] ?? null) == 'accepted';
+                            $newToken = $token; // Fiuu's token doesn't rotate — reused as-is
+                            $responseData = $data_rec;
+                        }
 
                         // get return data
-                        if ($data_rec[0]['status'] == 'accepted') {
+                        if ($isAccepted) {
 
                             // insert transaction
                             $transaction = Transaction::firstOrCreate(
@@ -109,12 +150,12 @@ class CheckNextPaymentSubscription extends Command
                                     'transaction_id' => $transaction->id,
                                 ],
                                 [
-                                    'token' => $token,
+                                    'token' => $newToken,
                                     'payment_date' => Carbon::now()->toDateString(),
                                     'next_payment_date' => $next,
                                     'status' => PaymentRecurring::SUBSCRIPTION_RENEWAL,
                                     'status_payment' => PaymentRecurring::PAID,
-                                    'data' => json_encode($data_rec),
+                                    'data' => json_encode($responseData),
                                     'amount' => $recurring->payment->amount,
                                     'is_paid' => true,
                                     'paid_at' => now(),

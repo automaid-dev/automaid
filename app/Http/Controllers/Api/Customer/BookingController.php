@@ -637,22 +637,31 @@ class BookingController extends Controller
 
             // get total purchased bags
             // ------------------------
-            $total_purchases = (count($user->bag_purchases) > 0) ? count($user->bag_purchases) : 0;
-            if ($request->pickup_bag_quantity > $total_purchases) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Bag is not enough.',
-                ]);
-            }
+            // Skipped entirely for dry-clean orders — the purchased/
+            // scanned physical wash-bag system is a Wash & Fold-specific
+            // mechanic (customer buys reusable bags, scans a QR code per
+            // bag). A dry-clean order doesn't use that bag economics at
+            // all; pickup_bag_quantity for dry-clean is just "1 bag of
+            // items", already validated separately (max items per bag)
+            // in the dry-clean items check above.
+            if (!$request->filled('service_category_id')) {
+                $total_purchases = (count($user->bag_purchases) > 0) ? count($user->bag_purchases) : 0;
+                if ($request->pickup_bag_quantity > $total_purchases) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Bag is not enough.',
+                    ]);
+                }
 
-            // get total scanned bags
-            // ----------------------
-            $total_scans = (count($user->qrcodes) > 0) ? count($user->qrcodes) : 0;
-            if ($request->pickup_bag_quantity > $total_scans) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Bag is not scan.',
-                ]);
+                // get total scanned bags
+                // ----------------------
+                $total_scans = (count($user->qrcodes) > 0) ? count($user->qrcodes) : 0;
+                if ($request->pickup_bag_quantity > $total_scans) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Bag is not scan.',
+                    ]);
+                }
             }
 
             // check if pickup date already booking
@@ -1134,9 +1143,18 @@ class BookingController extends Controller
             // not have subscription call payment gateway
             else {
 
-                // call payment gateway
-                $rms = new FiuuPaymentService();
-                $paymentUrl = $rms->getPaymentUrl([
+                // call payment gateway — dry-cleaning and Wash & Fold
+                // bookings can be routed to different gateways (admin
+                // toggle), since both share this same schedule() method
+                // but are otherwise fully independent transactions.
+                $gatewayCode = $request->filled('service_category_id')
+                    ? $setting->payment_gateway_dry_cleaning
+                    : $setting->payment_gateway_booking;
+                $order->payment_gateway = $gatewayCode;
+                $order->save();
+
+                $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
+                $paymentUrl = $rms->createPaymentUrl([
                     'amount' => $order->grand_total,
                     'orderid' => $order->id,
                     'bill_name' => $order->billing_name,

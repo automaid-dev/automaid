@@ -217,8 +217,11 @@ class OrderBagController extends Controller
                 );
 
                 // create payment
-                $rms = new FiuuPaymentService();
-                $paymentUrl = $rms->getPaymentUrl([
+                $order->payment_gateway = $setting->payment_gateway_bag_purchase;
+                $order->save();
+
+                $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($setting->payment_gateway_bag_purchase);
+                $paymentUrl = $rms->createPaymentUrl([
                     'amount' => $order->grand_total,
                     'orderid' => $order->id,
                     'bill_name' => $order->billing_name,

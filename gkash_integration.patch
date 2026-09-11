@@ -1,0 +1,1008 @@
+diff --git a/app/Contracts/PaymentGatewayInterface.php b/app/Contracts/PaymentGatewayInterface.php
+new file mode 100644
+index 0000000..d986f6c
+--- /dev/null
++++ b/app/Contracts/PaymentGatewayInterface.php
+@@ -0,0 +1,24 @@
++<?php
++
++namespace App\Contracts;
++
++interface PaymentGatewayInterface
++{
++    /**
++     * Build the hosted checkout URL to redirect the customer to.
++     *
++     * @param  array{orderid: string, amount: float|string, bill_name: string, bill_email: string, bill_mobile: string, bill_desc?: string, currency?: string} $data
++     * @return string
++     */
++    public function createPaymentUrl(array $data): string;
++
++    /**
++     * Independently verify a webhook/callback payload's signature
++     * against this gateway's own secret — never trust the payload's
++     * claimed status without this passing first.
++     *
++     * @param  array<string, mixed> $data
++     * @return bool
++     */
++    public function verifyCallback(array $data): bool;
++}
+diff --git a/app/Filament/Resources/SettingResource/Pages/EditSetting.php b/app/Filament/Resources/SettingResource/Pages/EditSetting.php
+index b6ffbf2..0fa5be2 100644
+--- a/app/Filament/Resources/SettingResource/Pages/EditSetting.php
++++ b/app/Filament/Resources/SettingResource/Pages/EditSetting.php
+@@ -284,6 +284,53 @@ public function form(Form $form): Form
+                                                     ]),
+                                             ]),
+ 
++                                        Section::make('Payment Gateway')
++                                            ->description('Choose which gateway processes each type of payment. Existing subscribers keep recurring on whichever gateway they originally signed up under, even after this is switched — only new subscriptions follow this setting.')
++                                            ->schema([
++                                                Grid::make(2)
++                                                    ->schema([
++                                                        Select::make('payment_gateway_booking')
++                                                            ->label('Booking (Wash & Fold)')
++                                                            ->options([
++                                                                'fiuu' => 'Fiuu',
++                                                                'gkash' => 'GKash',
++                                                            ])
++                                                            ->required()
++                                                            ->native(false),
++                                                        Select::make('payment_gateway_dry_cleaning')
++                                                            ->label('Dry Cleaning')
++                                                            ->options([
++                                                                'fiuu' => 'Fiuu',
++                                                                'gkash' => 'GKash',
++                                                            ])
++                                                            ->required()
++                                                            ->native(false),
++                                                        Select::make('payment_gateway_bag_purchase')
++                                                            ->label('Bag Purchase')
++                                                            ->options([
++                                                                'fiuu' => 'Fiuu',
++                                                                'gkash' => 'GKash',
++                                                            ])
++                                                            ->required()
++                                                            ->native(false),
++                                                        Select::make('payment_gateway_subscription')
++                                                            ->label('Subscription (new signups only)')
++                                                            ->options([
++                                                                // GKash intentionally not offered here yet —
++                                                                // the monthly recurring-billing job only
++                                                                // knows how to charge via Fiuu's recurring
++                                                                // API today. Offering GKash here would let
++                                                                // a new subscriber's first payment succeed
++                                                                // with nothing able to auto-renew them next
++                                                                // month.
++                                                                'fiuu' => 'Fiuu',
++                                                            ])
++                                                            ->required()
++                                                            ->native(false)
++                                                            ->helperText('GKash isn\'t available for subscriptions yet — recurring billing via GKash hasn\'t been built.'),
++                                                    ]),
++                                            ]),
++
+                                     ]),
+                                 
+                                 Grid::make(4)
+diff --git a/app/Http/Controllers/Api/Customer/BookingController.php b/app/Http/Controllers/Api/Customer/BookingController.php
+index aa417fd..64f7b7f 100644
+--- a/app/Http/Controllers/Api/Customer/BookingController.php
++++ b/app/Http/Controllers/Api/Customer/BookingController.php
+@@ -637,22 +637,31 @@ public function schedule(Request $request)
+ 
+             // get total purchased bags
+             // ------------------------
+-            $total_purchases = (count($user->bag_purchases) > 0) ? count($user->bag_purchases) : 0;
+-            if ($request->pickup_bag_quantity > $total_purchases) {
+-                return response()->json([
+-                    'status' => false,
+-                    'message' => 'Bag is not enough.',
+-                ]);
+-            }
++            // Skipped entirely for dry-clean orders — the purchased/
++            // scanned physical wash-bag system is a Wash & Fold-specific
++            // mechanic (customer buys reusable bags, scans a QR code per
++            // bag). A dry-clean order doesn't use that bag economics at
++            // all; pickup_bag_quantity for dry-clean is just "1 bag of
++            // items", already validated separately (max items per bag)
++            // in the dry-clean items check above.
++            if (!$request->filled('service_category_id')) {
++                $total_purchases = (count($user->bag_purchases) > 0) ? count($user->bag_purchases) : 0;
++                if ($request->pickup_bag_quantity > $total_purchases) {
++                    return response()->json([
++                        'status' => false,
++                        'message' => 'Bag is not enough.',
++                    ]);
++                }
+ 
+-            // get total scanned bags
+-            // ----------------------
+-            $total_scans = (count($user->qrcodes) > 0) ? count($user->qrcodes) : 0;
+-            if ($request->pickup_bag_quantity > $total_scans) {
+-                return response()->json([
+-                    'status' => false,
+-                    'message' => 'Bag is not scan.',
+-                ]);
++                // get total scanned bags
++                // ----------------------
++                $total_scans = (count($user->qrcodes) > 0) ? count($user->qrcodes) : 0;
++                if ($request->pickup_bag_quantity > $total_scans) {
++                    return response()->json([
++                        'status' => false,
++                        'message' => 'Bag is not scan.',
++                    ]);
++                }
+             }
+ 
+             // check if pickup date already booking
+@@ -1134,9 +1143,18 @@ public function schedule(Request $request)
+             // not have subscription call payment gateway
+             else {
+ 
+-                // call payment gateway
+-                $rms = new FiuuPaymentService();
+-                $paymentUrl = $rms->getPaymentUrl([
++                // call payment gateway — dry-cleaning and Wash & Fold
++                // bookings can be routed to different gateways (admin
++                // toggle), since both share this same schedule() method
++                // but are otherwise fully independent transactions.
++                $gatewayCode = $request->filled('service_category_id')
++                    ? $setting->payment_gateway_dry_cleaning
++                    : $setting->payment_gateway_booking;
++                $order->payment_gateway = $gatewayCode;
++                $order->save();
++
++                $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
++                $paymentUrl = $rms->createPaymentUrl([
+                     'amount' => $order->grand_total,
+                     'orderid' => $order->id,
+                     'bill_name' => $order->billing_name,
+diff --git a/app/Http/Controllers/Api/Customer/OrderBagController.php b/app/Http/Controllers/Api/Customer/OrderBagController.php
+index 72d84e8..11874d1 100644
+--- a/app/Http/Controllers/Api/Customer/OrderBagController.php
++++ b/app/Http/Controllers/Api/Customer/OrderBagController.php
+@@ -217,8 +217,11 @@ public function placeOrder(Request $request)
+                 );
+ 
+                 // create payment
+-                $rms = new FiuuPaymentService();
+-                $paymentUrl = $rms->getPaymentUrl([
++                $order->payment_gateway = $setting->payment_gateway_bag_purchase;
++                $order->save();
++
++                $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($setting->payment_gateway_bag_purchase);
++                $paymentUrl = $rms->createPaymentUrl([
+                     'amount' => $order->grand_total,
+                     'orderid' => $order->id,
+                     'bill_name' => $order->billing_name,
+diff --git a/app/Http/Controllers/Api/Customer/SubscriptionController.php b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+index 0720f3d..4dab4cc 100644
+--- a/app/Http/Controllers/Api/Customer/SubscriptionController.php
++++ b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+@@ -173,9 +173,20 @@ public function placeOrder(Request $request)
+                 ]
+             );
+ 
++            // Locked in now, at signup — the monthly renewal job and
++            // any future upgrade/card-update on this subscription read
++            // THIS column from here on, never the live Setting. This
++            // is what lets an existing Fiuu subscriber keep recurring
++            // on Fiuu even after admin switches new signups to GKash.
++            $gatewayCode = $setting->payment_gateway_subscription;
++            $subscription->payment_gateway = $gatewayCode;
++            $subscription->save();
++            $order->payment_gateway = $gatewayCode;
++            $order->save();
++
+             // create payment
+-            $rms = new FiuuPaymentService();
+-            $paymentUrl = $rms->getPaymentUrl([
++            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
++            $paymentUrl = $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+                 'bill_name' => $order->billing_name,
+@@ -187,6 +198,10 @@ public function placeOrder(Request $request)
+                 // payment — any other channel (eWallet, FPX, etc.)
+                 // can't be auto-charged for renewal, so subscription
+                 // purchases are restricted to card only at checkout.
++                // Ignored by GkashPaymentService (GKash isn't used for
++                // subscriptions yet — payment_gateway_subscription is
++                // locked to 'fiuu' in the admin form until GKash
++                // recurring billing exists).
+                 //
+                 // 'CC' was the value here previously — that's Fiuu's
+                 // Direct Server Integration TxnChannel code, a
+@@ -332,9 +347,17 @@ public function upgrade(Request $request)
+                 ]
+             );
+ 
+-            // create payment
+-            $rms = new FiuuPaymentService();
+-            $paymentUrl = $rms->getPaymentUrl([
++            // create payment — same gateway this subscription was
++            // originally locked to at signup, never the live setting.
++            // An upgrade is still the same ongoing subscriber
++            // relationship (and, once GKash recurring exists, the same
++            // stored recurring token), so it must never silently move
++            // to a different gateway mid-lifecycle.
++            $order->payment_gateway = $subscription->payment_gateway;
++            $order->save();
++
++            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
++            $paymentUrl = $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+                 'bill_name' => $order->billing_name,
+@@ -448,12 +471,20 @@ public function updateSubscription(Request $request)
+                     'start_at' => $subscription->start_at,
+                     'renew_at' => $subscription->renew_at,
+                     'previous_id' => $subscription->id,
++                    // Inherited, not re-resolved from the live setting
++                    // — this is still the same subscriber lifecycle,
++                    // just refreshing the payment method/card token.
++                    'payment_gateway' => $subscription->payment_gateway,
+                 ]
+             );
+ 
+-            // create payment
+-            $rms = new FiuuPaymentService();
+-            $paymentUrl = $rms->getPaymentUrl([
++            // create payment — locked gateway, same reasoning as the
++            // upgrade flow above.
++            $order->payment_gateway = $subscription->payment_gateway;
++            $order->save();
++
++            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
++            $paymentUrl = $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+                 'bill_name' => $order->billing_name,
+diff --git a/app/Http/Controllers/Webhook/GkashController.php b/app/Http/Controllers/Webhook/GkashController.php
+new file mode 100644
+index 0000000..86ee624
+--- /dev/null
++++ b/app/Http/Controllers/Webhook/GkashController.php
+@@ -0,0 +1,329 @@
++<?php
++
++namespace App\Http\Controllers\Webhook;
++
++use App\Http\Controllers\Controller;
++use App\Mail\NewOrderEmail;
++use App\Mail\PurchaseBagEmail;
++use App\Models\Activity;
++use App\Models\AssignJob;
++use App\Models\Bag;
++use App\Models\Booking;
++use App\Models\Order;
++use App\Models\OrderStatus;
++use App\Models\Payment;
++use App\Models\Qrcode;
++use App\Models\Transaction;
++use App\Models\Voucher;
++use App\Models\VoucherUser;
++use App\Services\OneSignalService;
++use App\Services\PaymentGateway\GkashPaymentService;
++use Illuminate\Http\Request;
++use Illuminate\Support\Facades\Artisan;
++use Illuminate\Support\Facades\Log;
++
++/**
++ * Mirrors FiuuController's getReturn/getNotification shape and the
++ * exact same downstream effects for the order types it covers
++ * (transaction record, payment record, order status, booking creation,
++ * voucher redemption, subscription quota counting, rider/merchant
++ * auto-assign, email + in-app notification) — but is its own,
++ * self-contained implementation rather than a shared one, so nothing
++ * about the already-working Fiuu flow was touched to build this.
++ *
++ * Deliberately does NOT handle Order::SUBSCRIPTION* order types —
++ * payment_gateway_subscription is locked to 'fiuu' in the admin form
++ * (see SettingResource) specifically because GKash recurring/pre-auth
++ * billing hasn't been built yet, so a subscription order should never
++ * actually reach this controller. If one somehow does, it's logged and
++ * left PENDING rather than guessed at.
++ */
++class GkashController extends Controller
++{
++    public $gkash;
++
++    public function __construct()
++    {
++        $this->gkash = new GkashPaymentService();
++    }
++
++    /**
++     * Customer-facing redirect after completing (or abandoning)
++     * payment on GKash's hosted page. Deliberately does NOT mark
++     * anything paid here — only getNotification (the server-to-server
++     * callback) is treated as authoritative, so a customer closing the
++     * tab early or GKash's redirect never itself grants a paid state.
++     * Renders the same payment.return view Fiuu's own getReturn uses,
++     * for a consistent "you can return to the app" webview regardless
++     * of which gateway processed the payment.
++     */
++    public function getReturn(Request $request)
++    {
++        Log::info('GKash webhook hit: getReturn', ['ip' => $request->ip(), 'body' => $request->getContent()]);
++
++        $content = $request->getContent();
++        parse_str($content, $data);
++
++        $order = Order::find($data['ref_no'] ?? null);
++        $paid = $order && $order->status === Order::PAID;
++
++        return view('payment.return', [
++            'success' => $paid,
++            'title' => $paid ? 'Payment successful' : 'Payment pending',
++            'message' => $paid
++                ? 'Your payment was received. You can return to the app.'
++                : 'Your payment could not be verified yet. You can return to the app and check your order status.',
++        ]);
++    }
++
++    /**
++     * Server-to-server payment confirmation — the actual source of
++     * truth. Independently verifies the signature before trusting
++     * anything in the payload (see GkashPaymentService::verifyCallback
++     * and its NOT INDEPENDENTLY VERIFIED caveat on the signature
++     * formula itself).
++     */
++    public function getNotification(Request $request)
++    {
++        Log::info('GKash webhook hit: getNotification', ['ip' => $request->ip(), 'body' => $request->getContent()]);
++
++        $content = $request->getContent();
++        parse_str($content, $data);
++
++        $checkPayment = $this->gkash->verifyCallback($data);
++
++        if (!$checkPayment) {
++            Log::warning('GKash webhook signature verification failed', ['data' => $data]);
++            return response('signature verification failed', 400);
++        }
++
++        $order = Order::find($data['ref_no'] ?? null);
++        Log::info('GKash payment check', [
++            'ref_no_requested' => $data['ref_no'] ?? null,
++            'order_found' => $order ? true : false,
++            'order_type' => $order->order_type ?? null,
++            'order_status' => $order->status ?? null,
++            'gkash_status' => $data['status'] ?? null,
++        ]);
++
++        if (!$order) {
++            return response('order not found', 404);
++        }
++
++        // GKash status 3 = Success (see laraditz/gkash package's
++        // documented status table — GKash's own doc site didn't
++        // render for direct confirmation, so this is the same source
++        // GkashPaymentService's other comments already reference).
++        $isSuccess = (string) ($data['status'] ?? '') === '3';
++        if (!$isSuccess) {
++            Log::info('GKash payment not successful, leaving order as-is', ['status' => $data['status'] ?? null]);
++            return response('ok', 200);
++        }
++
++        // Subscriptions never route through GKash (see class docblock)
++        // — if one somehow lands here, don't guess at activation logic
++        // that was never built for this gateway.
++        if (in_array($order->order_type, [
++            Order::SUBSCRIPTION,
++            Order::SUBSCRIPTION_RENEWAL,
++            Order::SUBSCRIPTION_UPDATE,
++            Order::SUBSCRIPTION_UPGRADE,
++        ])) {
++            Log::error('GKash webhook received a subscription-type order — this should never happen, subscriptions are Fiuu-only.', ['order_id' => $order->id]);
++            return response('subscription orders are not supported on this gateway', 422);
++        }
++
++        $payment = $order->payment;
++        $bag = $order->bag;
++        $order_booking = $order->order_booking;
++
++        // insert transaction
++        $transaction = Transaction::firstOrCreate(
++            ['order_id' => $order->id, 'payment_id' => $payment->id],
++            [
++                'date' => now(),
++                'type' => $order->order_type,
++                'amount' => $order->grand_total,
++                'status' => Transaction::PAID,
++            ]
++        );
++
++        // update payment status
++        $payment->data = json_encode($data);
++        $payment->payment_method = Payment::GKASH;
++        $payment->status = Payment::PAID;
++        $payment->channel = $data['payment_type'] ?? null;
++        $payment->is_paid = true;
++        $payment->paid_at = now();
++        $payment->save();
++
++        // update order status
++        $order->status = Order::PAID;
++        $order->save();
++
++        // order type purchase bag
++        if ($order->order_type == Order::PURCHASE_BAG) {
++
++            if ($bag) {
++                $bag->status_payment = Bag::PAID;
++                $bag->save();
++            }
++
++            // auto insert qrcodes
++            if ($order->quantity > 0) {
++                for ($i = 0; $i < $order->quantity; $i++) {
++                    $qr = new Qrcode();
++                    $code = $qr->getNextSeriesNo();
++                    Qrcode::create([
++                        'series_no' => $code,
++                        'user_id' => $order->user_id,
++                        'status' => Qrcode::SCANNED,
++                        'type' => Qrcode::AUTO,
++                        'scan_at' => now(),
++                        'scan_by' => $order->user_id,
++                        'created_by' => $order->user_id,
++                    ]);
++                }
++            }
++
++            // insert activity
++            Activity::firstOrCreate(
++                [
++                    'order_id' => $order->id,
++                    'user_id' => $order->user_id,
++                    'transaction_id' => $transaction->id,
++                    'user_type' => 'customer',
++                    'title' => 'Purchase Bag',
++                    'status' => Activity::ACTIVE,
++                ],
++            );
++
++            // send email + in-app notification + push (purchase bag)
++            $user = $order->user;
++            $subject = 'Auto Maid: Invoice for your purchase';
++            $emailContent = (new PurchaseBagEmail($user->name, $subject, $order))->render();
++            (new OneSignalService())->notifyUser(
++                $user,
++                \App\Models\CustomerNotification::BAG_PURCHASED,
++                $subject,
++                'Your bag purchase is confirmed — thanks for using Auto Maid.',
++                $emailContent,
++                $order->id,
++            );
++        }
++
++        // order type booking (Wash & Fold or Dry Cleaning — both share
++        // this same order type, distinguished by service_category_id)
++        else if ($order->order_type == Order::BOOKING) {
++
++            $booking = Booking::firstOrCreate(
++                [
++                    'order_id' => $order->id,
++                    'user_id' => $order->user_id,
++                    'pickup_location_id' => $order_booking->pickup_location_id,
++                    'pickup_date' => $order_booking->pickup_date,
++                ],
++                [
++                    'pickup_start_time' => $order_booking->pickup_start_time,
++                    'pickup_end_time' => $order_booking->pickup_end_time,
++                    'pickup_bag_quantity' => $order_booking->pickup_bag_quantity,
++                    'is_folding' => $order_booking->is_folding,
++                    'pickup_photo_path' => $order_booking->pickup_photo_path,
++                    'pickup_note' => $order_booking->pickup_note,
++                    'washing_charge' => $order_booking->washing_charge,
++                    'addon_charge' => $order_booking->addon_charge,
++                    'discount' => $order_booking->discount,
++                    'delivery_charge' => $order_booking->delivery_charge,
++                    'tax' => $order_booking->tax,
++                    'grand_total' => $order_booking->grand_total,
++                    'status' => Booking::ACTIVE,
++                    'service_category_id' => $order_booking->service_category_id,
++                    'items' => $order_booking->items,
++                    'dry_clean_discount_percent' => $order_booking->dry_clean_discount_percent,
++                ]
++            );
++
++            $order->booking_id = $booking->id;
++            $order->save();
++
++            // Count this booking against the subscription's plan order
++            // quota for this cycle, if the customer is subscribed —
++            // same reasoning as the matching block in
++            // FiuuController::getNotification. A subscriber's booking
++            // payment can go through either gateway even though their
++            // subscription itself stays on whichever gateway it was
++            // locked to — those are independent transactions.
++            $subscription = $order->user->subscribe;
++            if ($subscription) {
++                $subscription->orders_used_current_cycle = $subscription->orders_used_current_cycle + 1;
++                $subscription->save();
++
++                $order->used_subscription_quota = true;
++                $order->save();
++            }
++
++            // check voucher
++            if ($order->voucher_code) {
++                $voucher = Voucher::where('code', $order->voucher_code)->active()->first();
++                if ($voucher) {
++                    $taken = $voucher->voucher_users->count();
++                    if ($taken && $taken < $voucher->usage_limit) {
++                        VoucherUser::firstOrCreate([
++                            'voucher_id' => $voucher->id,
++                            'user_id' => $order->user_id,
++                            'order_id' => $order->id,
++                        ]);
++                    }
++                }
++            }
++
++            // insert order status
++            $codes = [OrderStatus::CUSTOMER_WAITING_RIDER_FOR_PICKUP, OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE, OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE];
++            foreach ($codes as $code) {
++                $is_customer = ($code == OrderStatus::CUSTOMER_WAITING_RIDER_FOR_PICKUP) ? 1 : 0;
++                $status = OrderStatus::firstOrCreate(
++                    ['order_id' => $order->id, 'code' => $code]
++                );
++
++                if ($is_customer) {
++                    AssignJob::firstOrCreate([
++                        'order_id' => $order->id,
++                        'code' => OrderStatus::CUSTOMER_WAITING_RIDER_FOR_PICKUP,
++                        'user_id' => $order->user_id,
++                        'order_status_id' => $status->id,
++                    ]);
++                }
++            }
++
++            // insert activity
++            Activity::firstOrCreate(
++                [
++                    'order_id' => $order->id,
++                    'user_id' => $order->user_id,
++                    'transaction_id' => $transaction->id,
++                    'user_type' => 'customer',
++                    'title' => 'Booking',
++                    'status' => Activity::ACTIVE,
++                ],
++            );
++
++            $user = $order->user;
++            $subject = 'Auto Maid: Invoice for your order';
++            $emailContent = (new NewOrderEmail($user->name, $subject, $order))->render();
++            (new OneSignalService())->notifyUser(
++                $user,
++                \App\Models\CustomerNotification::NEW_BOOKING,
++                $subject,
++                'Your booking is confirmed — we\'ll keep you posted.',
++                $emailContent,
++                $order->id,
++            );
++
++            // assign order to rider & merchant — same command Fiuu
++            // bookings trigger, gateway-agnostic.
++            Artisan::call('automaid:assign-order-to-rider-and-merchant');
++        }
++
++        return response('ok', 200);
++    }
++}
+diff --git a/app/Models/Payment.php b/app/Models/Payment.php
+index 222837d..de56deb 100755
+--- a/app/Models/Payment.php
++++ b/app/Models/Payment.php
+@@ -17,6 +17,7 @@ class Payment extends Model implements Auditable
+ 
+     const FIUU = 'fiuu';
+     const FIUU_RECURRING = 'fiuu-recurring';
++    const GKASH = 'gkash';
+ 
+     const PENDING = 'pending';
+     const PAID = 'paid';
+diff --git a/app/Services/PaymentGateway/FiuuPaymentService.php b/app/Services/PaymentGateway/FiuuPaymentService.php
+index b747886..f7a45b7 100644
+--- a/app/Services/PaymentGateway/FiuuPaymentService.php
++++ b/app/Services/PaymentGateway/FiuuPaymentService.php
+@@ -6,8 +6,9 @@
+ use Fiuu\Payment;
+ use App\Models\Order;
+ use App\Models\bag;
++use App\Contracts\PaymentGatewayInterface;
+ 
+-class FiuuPaymentService 
++class FiuuPaymentService implements PaymentGatewayInterface
+ {
+     protected $baseUrl;
+     protected $merchantId;
+@@ -172,6 +173,31 @@ public function checkVerifySignature(array $data)
+         return $rms->verifySignature($data['paydate'], $data['domain'], $key, $data['appcode'], $data['skey']);
+     }
+ 
++    /**
++     * PaymentGatewayInterface adapter — thin passthrough to the
++     * existing getPaymentUrl(), kept as its own method (rather than
++     * renaming getPaymentUrl itself) so every existing call site that
++     * already calls getPaymentUrl() directly keeps working unchanged.
++     */
++    public function createPaymentUrl(array $data): string
++    {
++        return $this->getPaymentUrl($data);
++    }
++
++    /**
++     * PaymentGatewayInterface adapter — thin passthrough to
++     * checkVerifySignature(), same reasoning as createPaymentUrl()
++     * above. FiuuController's webhook continues calling
++     * checkVerifySignature() directly (Fiuu's own webhook payload
++     * shape is specific to Fiuu, not something worth genericizing),
++     * this exists for any future caller that only knows about the
++     * shared PaymentGatewayInterface.
++     */
++    public function verifyCallback(array $data): bool
++    {
++        return (bool) $this->checkVerifySignature($data);
++    }
++
+     /**
+      * [getEscrowService description]
+      * @param  string $txnID [description]
+diff --git a/app/Services/PaymentGateway/GkashPaymentService.php b/app/Services/PaymentGateway/GkashPaymentService.php
+new file mode 100644
+index 0000000..34b0496
+--- /dev/null
++++ b/app/Services/PaymentGateway/GkashPaymentService.php
+@@ -0,0 +1,154 @@
++<?php
++
++namespace App\Services\PaymentGateway;
++
++use Illuminate\Support\Facades\Http;
++use App\Contracts\PaymentGatewayInterface;
++
++class GkashPaymentService implements PaymentGatewayInterface
++{
++    protected $baseUrl;
++    protected $merchantId;
++    protected $signatureKey;
++    protected $environment;
++
++    public function __construct()
++    {
++        $this->baseUrl = config('services.gkash.base_url');
++        $this->merchantId = config('services.gkash.merchant_id');
++        $this->signatureKey = config('services.gkash.signature_key');
++        $this->environment = config('services.gkash.environment');
++    }
++
++    /**
++     * Builds the hosted checkout URL by calling GKash's payment/submit
++     * API — mirrors FiuuPaymentService::getPaymentUrl()'s $data shape
++     * exactly, so callers going through PaymentGatewayResolver don't
++     * need to know which gateway they ended up with.
++     *
++     * !! SIGNATURE ALGORITHM NOT INDEPENDENTLY VERIFIED !!
++     * See buildSignature() below before running this against GKash's
++     * real API for the first time.
++     *
++     * @param  array{orderid: string, amount: float|string, bill_name: string, bill_email: string, bill_mobile: string, bill_desc?: string, currency?: string} $data
++     * @return string
++     */
++    public function createPaymentUrl(array $data): string
++    {
++        $amount = number_format((float) $data['amount'], 2, '.', '');
++        $currency = $data['currency'] ?? 'MYR';
++
++        $payload = [
++            'merchant_id' => $this->merchantId,
++            'ref_no' => $data['orderid'],
++            'amount' => $amount,
++            'currency' => $currency,
++            'bill_name' => $data['bill_name'],
++            'bill_email' => $data['bill_email'],
++            'bill_mobile' => $data['bill_mobile'],
++            'description' => $data['bill_desc'] ?? 'Automaid Payment',
++            'return_url' => route('webhook.gkash.return'),
++            'callback_url' => route('webhook.gkash.notification'),
++        ];
++        $payload['signature'] = $this->buildSignature($payload);
++
++        $response = Http::asForm()->post($this->baseUrl . '/api/payment/submit', $payload);
++        $result = $response->json();
++
++        if (!$response->successful() || empty($result['payment_url'])) {
++            \Log::error('GkashPaymentService::createPaymentUrl failed', [
++                'payload' => $payload,
++                'response_status' => $response->status(),
++                'response_body' => $result,
++            ]);
++            throw new \Exception('Could not create GKash payment: ' . ($result['message'] ?? 'unknown error'));
++        }
++
++        return $result['payment_url'];
++    }
++
++    /**
++     * Independently verifies a GKash callback/return payload's
++     * signature before trusting its claimed status — never trust
++     * $data['status'] on its own.
++     *
++     * !! SIGNATURE ALGORITHM NOT INDEPENDENTLY VERIFIED !! — same
++     * caveat as buildSignature() below, since this re-derives the
++     * expected signature using the identical formula.
++     *
++     * @param  array<string, mixed> $data
++     * @return bool
++     */
++    public function verifyCallback(array $data): bool
++    {
++        if (empty($data['signature'])) {
++            return false;
++        }
++        $expected = $this->buildSignature($data);
++        return hash_equals($expected, (string) $data['signature']);
++    }
++
++    /**
++     * Query GKash directly for a transaction's current status — the
++     * server-to-server source of truth, same role Fiuu's checkPayment
++     * plays. Use this to confirm a payment rather than ever trusting a
++     * client-reported result alone.
++     *
++     * @param  string $refNo
++     * @return array<string, mixed>
++     */
++    public function queryTransactionStatus(string $refNo): array
++    {
++        $payload = [
++            'merchant_id' => $this->merchantId,
++            'ref_no' => $refNo,
++        ];
++        $payload['signature'] = $this->buildSignature($payload);
++
++        $response = Http::asForm()->post($this->baseUrl . '/api/payment/query', $payload);
++        return $response->json() ?? [];
++    }
++
++    /**
++     * !! NOT INDEPENDENTLY VERIFIED — CONFIRM BEFORE FIRST LIVE USE !!
++     *
++     * GKash's public documentation site (doc.gkash.my) is a JS
++     * single-page app that didn't render through automated fetching,
++     * and the underlying signature formula wasn't published anywhere
++     * else I could find (their own Laravel/Flutter SDKs hide it inside
++     * compiled/closed logic). What IS confirmed from GKash's own
++     * response samples and third-party SDK usage: field names
++     * (merchant_id, ref_no, amount, currency, signature), and that a
++     * changelog entry for the closest known integration explicitly
++     * mentions fixing a bug in "amount on signature generation" —
++     * confirming amount is part of whatever string gets hashed.
++     *
++     * This implementation is a best-effort reconstruction following
++     * the common pattern used across other Malaysian gateways
++     * (concatenate key fields in a fixed order + the merchant's
++     * private signature key, then MD5): merchant_id + ref_no + amount
++     * + currency + signature_key.
++     *
++     * Before going live: confirm this exact formula (field order,
++     * hash algorithm, uppercase/lowercase hex) against GKash's
++     * Merchant Onboarding Guideline (linked in the account welcome
++     * email) or via merchantsupport@gkash.com. Getting this wrong
++     * means every payment attempt fails signature verification at
++     * GKash's end (safe — no money moves) rather than silently
++     * succeeding with a wrong signature, so this is a "won't work
++     * until fixed" risk, not a security hole either way.
++     *
++     * @param  array<string, mixed> $data
++     * @return string
++     */
++    protected function buildSignature(array $data): string
++    {
++        $merchantId = $data['merchant_id'] ?? $this->merchantId;
++        $refNo = $data['ref_no'] ?? '';
++        $amount = $data['amount'] ?? '';
++        $currency = $data['currency'] ?? 'MYR';
++
++        $string = $merchantId . $refNo . $amount . $currency . $this->signatureKey;
++        return md5($string);
++    }
++}
+diff --git a/app/Services/PaymentGateway/PaymentGatewayResolver.php b/app/Services/PaymentGateway/PaymentGatewayResolver.php
+new file mode 100644
+index 0000000..f9c9655
+--- /dev/null
++++ b/app/Services/PaymentGateway/PaymentGatewayResolver.php
+@@ -0,0 +1,29 @@
++<?php
++
++namespace App\Services\PaymentGateway;
++
++use App\Contracts\PaymentGatewayInterface;
++
++class PaymentGatewayResolver
++{
++    const FIUU = 'fiuu';
++    const GKASH = 'gkash';
++
++    /**
++     * @param  string|null $gatewayCode 'fiuu' or 'gkash' — falls back
++     *                                   to Fiuu for null/unrecognized
++     *                                   values (e.g. a legacy Setting
++     *                                   row from before this column
++     *                                   existed), so this never breaks
++     *                                   an existing working flow by
++     *                                   defaulting to something new.
++     * @return PaymentGatewayInterface
++     */
++    public function resolve(?string $gatewayCode): PaymentGatewayInterface
++    {
++        return match ($gatewayCode) {
++            self::GKASH => app(GkashPaymentService::class),
++            default => app(FiuuPaymentService::class),
++        };
++    }
++}
+diff --git a/config/services.php b/config/services.php
+index 5374ef5..670fe63 100644
+--- a/config/services.php
++++ b/config/services.php
+@@ -78,6 +78,20 @@
+         'environment' => env('FIUU_ENVIRONMENT', 'sandbox'),
+     ],
+ 
++    'gkash' => [
++        // Live API host per the merchant onboarding email. GKash's demo
++        // credentials were issued without a separate documented sandbox
++        // API host — worth confirming with merchantsupport@gkash.com
++        // whether this exact host is safe to test against with demo
++        // credentials, or whether a distinct sandbox host exists, before
++        // relying on GKASH_ENVIRONMENT=sandbox alone to keep test
++        // transactions harmless.
++        'base_url' => env('GKASH_BASE_URL', 'https://api.gkash.my'),
++        'merchant_id' => env('GKASH_MERCHANT_ID'),
++        'signature_key' => env('GKASH_SIGNATURE_KEY'),
++        'environment' => env('GKASH_ENVIRONMENT', 'sandbox'),
++    ],
++
+     'rms' => [
+         'merchant_id' => env('RMS_MERCHANT_ID', 'SB_payandwash'),
+         'sub_merchant_id' => env('RMS_SUB_MERCHANT_ID', 'SB_payandwash'),
+diff --git a/database/migrations/2026_09_11_090000_add_payment_gateway_columns.php b/database/migrations/2026_09_11_090000_add_payment_gateway_columns.php
+new file mode 100644
+index 0000000..b20c080
+--- /dev/null
++++ b/database/migrations/2026_09_11_090000_add_payment_gateway_columns.php
+@@ -0,0 +1,47 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::table('orders', function (Blueprint $table) {
++            if (!Schema::hasColumn('orders', 'payment_gateway')) {
++                // 'fiuu' | 'gkash' — nullable since historical orders
++                // predate this column and were all Fiuu; only new
++                // orders going forward get this set explicitly.
++                $table->string('payment_gateway', 20)->nullable()->after('order_type');
++            }
++        });
++
++        Schema::table('subscriptions', function (Blueprint $table) {
++            if (!Schema::hasColumn('subscriptions', 'payment_gateway')) {
++                // Set once at signup and never changed afterwards
++                // (until cancel + resubscribe) — this is what lets an
++                // existing Fiuu subscriber keep recurring on Fiuu even
++                // after admin switches the active gateway setting to
++                // GKash for new signups. The monthly renewal job reads
++                // THIS column, never the live admin setting.
++                $table->string('payment_gateway', 20)->nullable()->after('plan_code');
++            }
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('orders', function (Blueprint $table) {
++            if (Schema::hasColumn('orders', 'payment_gateway')) {
++                $table->dropColumn('payment_gateway');
++            }
++        });
++
++        Schema::table('subscriptions', function (Blueprint $table) {
++            if (Schema::hasColumn('subscriptions', 'payment_gateway')) {
++                $table->dropColumn('payment_gateway');
++            }
++        });
++    }
++};
+diff --git a/database/migrations/2026_09_11_090001_add_payment_gateway_settings_fields.php b/database/migrations/2026_09_11_090001_add_payment_gateway_settings_fields.php
+new file mode 100644
+index 0000000..a22ba8d
+--- /dev/null
++++ b/database/migrations/2026_09_11_090001_add_payment_gateway_settings_fields.php
+@@ -0,0 +1,51 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::table('settings', function (Blueprint $table) {
++            if (!Schema::hasColumn('settings', 'payment_gateway_booking')) {
++                $table->string('payment_gateway_booking', 20)->default('fiuu');
++            }
++            if (!Schema::hasColumn('settings', 'payment_gateway_dry_cleaning')) {
++                $table->string('payment_gateway_dry_cleaning', 20)->default('fiuu');
++            }
++            if (!Schema::hasColumn('settings', 'payment_gateway_bag_purchase')) {
++                $table->string('payment_gateway_bag_purchase', 20)->default('fiuu');
++            }
++            if (!Schema::hasColumn('settings', 'payment_gateway_subscription')) {
++                // Locked to 'fiuu' in the admin form (see SettingResource)
++                // until GKash recurring/pre-auth billing is actually
++                // built — the monthly renewal job only knows how to
++                // charge via Fiuu's recurring API today. Stored as its
++                // own column now (rather than added later) so the
++                // per-subscription lock-in (subscriptions.payment_gateway,
++                // see the other migration in this pair) has a consistent
++                // "what's currently active" value to read at signup from
++                // day one.
++                $table->string('payment_gateway_subscription', 20)->default('fiuu');
++            }
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('settings', function (Blueprint $table) {
++            foreach ([
++                'payment_gateway_subscription',
++                'payment_gateway_bag_purchase',
++                'payment_gateway_dry_cleaning',
++                'payment_gateway_booking',
++            ] as $column) {
++                if (Schema::hasColumn('settings', $column)) {
++                    $table->dropColumn($column);
++                }
++            }
++        });
++    }
++};
+diff --git a/routes/web.php b/routes/web.php
+index f9b9d29..a5503aa 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -4,6 +4,7 @@
+ use App\Http\Controllers\Auth\VerificationController;
+ use App\Http\Controllers\TestController;
+ use App\Http\Controllers\Webhook\FiuuController;
++use App\Http\Controllers\Webhook\GkashController;
+ // use SimpleSoftwareIO\QrCode\Facades\QrCode;
+ use App\Models\Qrcode;
+ 
+@@ -30,6 +31,9 @@
+     Route::post('/fiuu/notification', [FiuuController::class, 'getNotification'])->name('fiuu.notification');
+     Route::post('/fiuu/callback', [FiuuController::class, 'getCallback'])->name('fiuu.callback');
+     Route::post('/fiuu/test', [FiuuController::class, 'getTest'])->name('fiuu.test');
++
++    Route::post('/gkash/return', [GkashController::class, 'getReturn'])->name('gkash.return');
++    Route::post('/gkash/notification', [GkashController::class, 'getNotification'])->name('gkash.notification');
+ });
+ 
+ Route::get('/qrcode/print/{series_no}', function ($series_no) {

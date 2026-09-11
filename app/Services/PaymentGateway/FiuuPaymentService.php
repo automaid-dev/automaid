@@ -6,8 +6,9 @@ use Illuminate\Support\Facades\Http;
 use Fiuu\Payment;
 use App\Models\Order;
 use App\Models\bag;
+use App\Contracts\PaymentGatewayInterface;
 
-class FiuuPaymentService 
+class FiuuPaymentService implements PaymentGatewayInterface
 {
     protected $baseUrl;
     protected $merchantId;
@@ -170,6 +171,31 @@ class FiuuPaymentService
         $rms = new Payment($this->merchantId, $this->verifyKey, $this->secretKey, $this->environment);      
         $key = md5($data['tranID'] . $data['orderid'] . $data['status'] . $data['domain'] . $data['amount'] . $data['currency']);
         return $rms->verifySignature($data['paydate'], $data['domain'], $key, $data['appcode'], $data['skey']);
+    }
+
+    /**
+     * PaymentGatewayInterface adapter — thin passthrough to the
+     * existing getPaymentUrl(), kept as its own method (rather than
+     * renaming getPaymentUrl itself) so every existing call site that
+     * already calls getPaymentUrl() directly keeps working unchanged.
+     */
+    public function createPaymentUrl(array $data): string
+    {
+        return $this->getPaymentUrl($data);
+    }
+
+    /**
+     * PaymentGatewayInterface adapter — thin passthrough to
+     * checkVerifySignature(), same reasoning as createPaymentUrl()
+     * above. FiuuController's webhook continues calling
+     * checkVerifySignature() directly (Fiuu's own webhook payload
+     * shape is specific to Fiuu, not something worth genericizing),
+     * this exists for any future caller that only knows about the
+     * shared PaymentGatewayInterface.
+     */
+    public function verifyCallback(array $data): bool
+    {
+        return (bool) $this->checkVerifySignature($data);
     }
 
     /**

@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\VerificationController;
 use App\Http\Controllers\TestController;
 use App\Http\Controllers\Webhook\FiuuController;
+use App\Http\Controllers\Webhook\GkashController;
 // use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use App\Models\Qrcode;
 
@@ -30,6 +31,10 @@ Route::group([
     Route::post('/fiuu/notification', [FiuuController::class, 'getNotification'])->name('fiuu.notification');
     Route::post('/fiuu/callback', [FiuuController::class, 'getCallback'])->name('fiuu.callback');
     Route::post('/fiuu/test', [FiuuController::class, 'getTest'])->name('fiuu.test');
+
+    Route::post('/gkash/return', [GkashController::class, 'getReturn'])->name('gkash.return');
+    Route::post('/gkash/notification', [GkashController::class, 'getNotification'])->name('gkash.notification');
+    Route::get('/gkash/checkout-form/{orderid}', [GkashController::class, 'getCheckoutForm'])->name('gkash.checkout-form');
 });
 
 Route::get('/qrcode/print/{series_no}', function ($series_no) {

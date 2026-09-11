@@ -164,6 +164,7 @@ Route::middleware('auth:sanctum')->group( function () {
 		Route::post('/order/upcoming', [\App\Http\Controllers\Api\Customer\OrderController::class, 'orderUpcoming']);
 
 		Route::post('/order/detail', [\App\Http\Controllers\Api\Customer\OrderController::class, 'orderDetail']);
+		Route::post('/order/cancel-pending', [\App\Http\Controllers\Api\Customer\OrderController::class, 'cancelPendingOrder']);
 		Route::post('/order/rating', [\App\Http\Controllers\Api\Customer\OrderController::class, 'orderRating']);
 	});	
 

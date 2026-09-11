@@ -74,6 +74,82 @@ class OrderController extends Controller
     }
 
     /**
+     * Called when the customer explicitly backs out of the payment
+     * gateway's page without completing it (the "X" close button in
+     * PaymentWebViewScreen) — marks that specific order cancelled
+     * immediately rather than leaving it stuck in `pending` forever,
+     * which is what was previously happening (see the Flutter side:
+     * closing the WebView just popped `false` with no backend call at
+     * all). Defensive against the race where a webhook confirms
+     * payment right as the customer closes the browser: only ever
+     * cancels an order that is STILL pending at the moment this runs,
+     * never overwrites an already-paid order.
+     *
+     * This is the immediate-feedback half of the fix — the scheduled
+     * `automaid:cancel-abandoned-orders` command is the safety net for
+     * cases this never gets a chance to run (app killed, no network,
+     * etc.).
+     * @param  Request $request [description]
+     * @return [type]           [description]
+     */
+    public function cancelPendingOrder(Request $request)
+    {
+        try {
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found.',
+                ]);
+            }
+
+            $request->validate([
+                'order_id' => 'required|integer',
+            ]);
+
+            $order = Order::where('id', $request->order_id)
+                ->where('user_id', $user->id)
+                ->where('status', Order::PENDING)
+                ->first();
+
+            if ($order) {
+                $order->status = Order::CANCELLED;
+                $order->save();
+
+                // Subscription-type orders each create their own
+                // Subscription row (see Subscription::firstOrCreate
+                // throughout SubscriptionController) — that row starts
+                // life as PENDING and is what the app's subscription
+                // history screen actually reads its status badge from
+                // (Order.status is the payment/transaction status,
+                // a separate concern). Cancelling only the order would
+                // leave that badge stuck on "Pending" forever even
+                // though nothing about it is still active.
+                $subscription = $order->subscription;
+                if ($subscription && $subscription->status === \App\Models\Subscription::PENDING) {
+                    $subscription->status = \App\Models\Subscription::CANCELLED;
+                    $subscription->save();
+                }
+            }
+            // No error if not found/not pending — the caller doesn't
+            // need to know or care whether it was already paid,
+            // already cancelled, or belongs to someone else; the
+            // outcome (this order isn't left dangling) is the same
+            // either way.
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Order cancelled.',
+            ]);
+        } catch (\Throwable $th) {
+            return response()->json([
+                'status' => false,
+                'message' => $th->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * [orderRating description]
      * @param  Request $request [description]
      * @return [type]           [description]

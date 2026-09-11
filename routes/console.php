@@ -11,5 +11,6 @@ use Illuminate\Support\Facades\Schedule;
 Schedule::command('automaid:assign-order-to-rider-and-merchant')->everyMinute();
 Schedule::command('automaid:auto-insert-activity-next-day-delivery')->dailyAt('00:01');
 Schedule::command('automaid:check-next-payment-subscription')->dailyAt('00:05');
+Schedule::command('automaid:cancel-abandoned-orders')->hourly();
 
 

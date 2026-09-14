@@ -1,0 +1,104 @@
+diff --git a/app/Filament/Resources/UserResource/Pages/EditUser.php b/app/Filament/Resources/UserResource/Pages/EditUser.php
+index 72b78ce..3012000 100644
+--- a/app/Filament/Resources/UserResource/Pages/EditUser.php
++++ b/app/Filament/Resources/UserResource/Pages/EditUser.php
+@@ -866,6 +866,34 @@ public function form(Form $form): Form
+                                             ]),
+                                     ]),
+ 
++                                Section::make('Declarations & Consents')
++                                    ->description('Read-only — recorded once at registration, exactly as the rider submitted it.')
++                                    ->schema([
++                                        Grid::make(2)
++                                            ->schema([
++                                                Placeholder::make('rider.declaration_accepted_display')
++                                                    ->label('Declarations (Pengisytiharan)')
++                                                    ->content(function () {
++                                                        $accepted = $this->record?->rider?->declaration_accepted;
++                                                        return new HtmlString(
++                                                            $accepted
++                                                                ? '<span class="text-success-600 font-semibold">Yes — all declarations accepted</span>'
++                                                                : '<span class="text-danger-600 font-semibold">No</span>'
++                                                        );
++                                                    }),
++                                                Placeholder::make('rider.consent_accepted_display')
++                                                    ->label('Consents (Persetujuan)')
++                                                    ->content(function () {
++                                                        $accepted = $this->record?->rider?->consent_accepted;
++                                                        return new HtmlString(
++                                                            $accepted
++                                                                ? '<span class="text-success-600 font-semibold">Yes — all consents accepted</span>'
++                                                                : '<span class="text-danger-600 font-semibold">No</span>'
++                                                        );
++                                                    }),
++                                            ]),
++                                    ]),
++
+                                 \Filament\Forms\Components\Actions::make([
+                                     \Filament\Forms\Components\Actions\Action::make('submit')
+                                         ->label('Save Settings')
+diff --git a/app/Http/Controllers/Api/RiderController.php b/app/Http/Controllers/Api/RiderController.php
+index 13d693e..7b627e7 100644
+--- a/app/Http/Controllers/Api/RiderController.php
++++ b/app/Http/Controllers/Api/RiderController.php
+@@ -212,6 +212,16 @@ public function register(Request $request)
+ 
+                 $rider->bank_name = $request->bank_name ?? null;
+                 $rider->bank_no = $request->bank_no ?? null;
++                // Sent as a single combined boolean from the app —
++                // true only once every checkbox on that screen was
++                // checked. Not `required` at the validation layer
++                // above deliberately: rejecting the whole registration
++                // outright on a false/missing value here would be a
++                // confusing, unlabeled error for something the app
++                // already gates behind a disabled Next button — false
++                // is recorded as-is and stays visible to admin instead.
++                $rider->declaration_accepted = filter_var($request->declaration_accepted, FILTER_VALIDATE_BOOLEAN);
++                $rider->consent_accepted = filter_var($request->consent_accepted, FILTER_VALIDATE_BOOLEAN);
+                 $rider->save();
+ 
+                 // get city
+diff --git a/database/migrations/2026_09_13_090000_add_declaration_consent_riders_table.php b/database/migrations/2026_09_13_090000_add_declaration_consent_riders_table.php
+new file mode 100644
+index 0000000..de065ba
+--- /dev/null
++++ b/database/migrations/2026_09_13_090000_add_declaration_consent_riders_table.php
+@@ -0,0 +1,38 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::table('riders', function (Blueprint $table) {
++            if (!Schema::hasColumn('riders', 'declaration_accepted')) {
++                // True only once every checkbox on the Declarations
++                // (Pengisytiharan) screen was checked — the app sends
++                // this as a single combined flag, not 5 separate
++                // fields, matching "all checkbox checked as single yes
++                // in field".
++                $table->boolean('declaration_accepted')->default(false)->after('status');
++            }
++            if (!Schema::hasColumn('riders', 'consent_accepted')) {
++                // Same idea for the Consents (Persetujuan) screen's 4
++                // checkboxes.
++                $table->boolean('consent_accepted')->default(false)->after('declaration_accepted');
++            }
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('riders', function (Blueprint $table) {
++            foreach (['consent_accepted', 'declaration_accepted'] as $column) {
++                if (Schema::hasColumn('riders', $column)) {
++                    $table->dropColumn($column);
++                }
++            }
++        });
++    }
++};

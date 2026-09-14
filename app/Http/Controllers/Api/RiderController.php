@@ -78,8 +78,13 @@ class RiderController extends Controller
                     'plate_no' => 'required',
                     'vehicle_make' => 'required',
                     'vehicle_model' => 'required', 
-                    // 'bank_name' => 'required',  
-                    // 'bank_no' => 'required',  
+                    // Now required — the app's Bank Information
+                    // section is no longer marked "(optional)" and
+                    // validates this client-side before allowing Next.
+                    // Enforced here too so a direct API call (bypassing
+                    // the app's own validation) can't skip it.
+                    'bank_name' => 'required',
+                    'bank_no' => 'required',
                     
                     'ic_front' => 'image|mimes:jpg,png|max:10240',
                     'ic_back' => 'image|mimes:jpg,png|max:10240',
@@ -212,6 +217,16 @@ class RiderController extends Controller
 
                 $rider->bank_name = $request->bank_name ?? null;
                 $rider->bank_no = $request->bank_no ?? null;
+                // Sent as a single combined boolean from the app —
+                // true only once every checkbox on that screen was
+                // checked. Not `required` at the validation layer
+                // above deliberately: rejecting the whole registration
+                // outright on a false/missing value here would be a
+                // confusing, unlabeled error for something the app
+                // already gates behind a disabled Next button — false
+                // is recorded as-is and stays visible to admin instead.
+                $rider->declaration_accepted = filter_var($request->declaration_accepted, FILTER_VALIDATE_BOOLEAN);
+                $rider->consent_accepted = filter_var($request->consent_accepted, FILTER_VALIDATE_BOOLEAN);
                 $rider->save();
 
                 // get city

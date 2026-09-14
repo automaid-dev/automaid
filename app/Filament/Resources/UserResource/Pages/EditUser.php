@@ -866,6 +866,34 @@ class EditUser extends EditRecord
                                             ]),
                                     ]),
 
+                                Section::make('Declarations & Consents')
+                                    ->description('Read-only — recorded once at registration, exactly as the rider submitted it.')
+                                    ->schema([
+                                        Grid::make(2)
+                                            ->schema([
+                                                Placeholder::make('rider.declaration_accepted_display')
+                                                    ->label('Declarations (Pengisytiharan)')
+                                                    ->content(function () {
+                                                        $accepted = $this->record?->rider?->declaration_accepted;
+                                                        return new HtmlString(
+                                                            $accepted
+                                                                ? '<span class="text-success-600 font-semibold">Yes — all declarations accepted</span>'
+                                                                : '<span class="text-danger-600 font-semibold">No</span>'
+                                                        );
+                                                    }),
+                                                Placeholder::make('rider.consent_accepted_display')
+                                                    ->label('Consents (Persetujuan)')
+                                                    ->content(function () {
+                                                        $accepted = $this->record?->rider?->consent_accepted;
+                                                        return new HtmlString(
+                                                            $accepted
+                                                                ? '<span class="text-success-600 font-semibold">Yes — all consents accepted</span>'
+                                                                : '<span class="text-danger-600 font-semibold">No</span>'
+                                                        );
+                                                    }),
+                                            ]),
+                                    ]),
+
                                 \Filament\Forms\Components\Actions::make([
                                     \Filament\Forms\Components\Actions\Action::make('submit')
                                         ->label('Save Settings')

@@ -701,7 +701,18 @@ class BookingController extends Controller
 
             // check voucher code
             // ------------------
+            // Discount amount is now read directly from the validated
+            // Voucher record itself, not trusted from the client — the
+            // same class of gap already fixed for SST/washing/delivery
+            // charges elsewhere in this method. Previously $discount
+            // came from `$request->discount ?? 0` entirely separately
+            // from this block, meaning a valid, correctly-recorded
+            // voucher_code produced zero actual discount unless the
+            // client happened to also send a matching `discount` value
+            // — confirmed in production: order 1353 has
+            // voucher_code="WELCOME" but discount="0.00".
             $voucher_code = null;
+            $discount = 0;
             if (isset($request->voucher_code)) {
 
                 // check voucher
@@ -714,6 +725,7 @@ class BookingController extends Controller
 
                         // set voucher code
                         $voucher_code = $request->voucher_code;
+                        $discount = (float) ($voucher->discount_amount ?? 0);
                     }
                 }
             }
@@ -734,7 +746,6 @@ class BookingController extends Controller
                 $washing_charge = $this->calculateWashPrice($is_subscribe, $request->pickup_bag_quantity, $setting->wash_fee, $setting->total_bag_free_wash, $has_quota);
             }
             $addon_charge = $request->addon_charge ?? 0;
-            $discount = $request->discount ?? 0;
 
             // addon charge discount of subscription customer
             // ----------------------------------------------

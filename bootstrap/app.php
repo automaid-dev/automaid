@@ -23,6 +23,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(\App\Http\Middleware\CorsMiddleware::class);
         $middleware->validateCsrfTokens(except: [
             '/webhook/fiuu/*',
+            // Same reasoning as Fiuu — this is hit by GKash's server
+            // directly (no browser session, no CSRF token to present),
+            // not excluding it meant every callback was silently
+            // rejected with a 419, which the custom exception handler
+            // below then converts into a 302 redirect via back(). That
+            // 302 is exactly what showed up in nginx's access log for
+            // every GKash webhook hit, and explains why
+            // GkashController's own logging never fired at all — CSRF
+            // rejected the request before it ever reached the
+            // controller.
+            '/webhook/gkash/*',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

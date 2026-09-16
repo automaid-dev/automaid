@@ -77,6 +77,20 @@ class GkashPaymentService implements PaymentGatewayInterface
         }
         $payload['signature'] = $this->buildRequestSignature($cartId, $amount, $currency);
 
+        // Logged unconditionally (not just on failure) — specifically
+        // to make returnurl/callbackurl visible for diagnosing "GKash
+        // never calls back at all" reports. These are built from
+        // route(), which depends entirely on APP_URL in .env — if
+        // that's not the real public domain, GKash's servers can
+        // never reach either URL, which looks exactly like this from
+        // the customer's side (stuck on some generic page, nothing
+        // ever recorded here).
+        \Log::info('GkashPaymentService::createPaymentUrl request', [
+            'cart_id' => $cartId,
+            'returnurl' => $payload['returnurl'],
+            'callbackurl' => $payload['callbackurl'],
+        ]);
+
         $response = Http::asJson()->post($this->baseUrl . '/api/payment/form', $payload);
         $result = $response->json();
 
@@ -90,10 +104,15 @@ class GkashPaymentService implements PaymentGatewayInterface
         }
 
         if (!empty($result['redirect']['url'])) {
+            \Log::info('GkashPaymentService::createPaymentUrl succeeded (redirect.url)', [
+                'cart_id' => $cartId,
+                'redirect_url' => $result['redirect']['url'],
+            ]);
             return $result['redirect']['url'];
         }
 
         if (!empty($result['redirect']['html'])) {
+            \Log::info('GkashPaymentService::createPaymentUrl succeeded (redirect.html)', ['cart_id' => $cartId]);
             $cacheKey = 'gkash_checkout_form_' . $data['orderid'];
             Cache::put($cacheKey, $result['redirect']['html'], now()->addMinutes(30));
             return route('webhook.gkash.checkout-form', ['orderid' => $data['orderid']]);

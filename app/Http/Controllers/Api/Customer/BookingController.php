@@ -701,33 +701,17 @@ class BookingController extends Controller
 
             // check voucher code
             // ------------------
-            // Discount amount is now read directly from the validated
-            // Voucher record itself, not trusted from the client — the
-            // same class of gap already fixed for SST/washing/delivery
-            // charges elsewhere in this method. Previously $discount
-            // came from `$request->discount ?? 0` entirely separately
-            // from this block, meaning a valid, correctly-recorded
-            // voucher_code produced zero actual discount unless the
-            // client happened to also send a matching `discount` value
-            // — confirmed in production: order 1353 has
-            // voucher_code="WELCOME" but discount="0.00".
+            // Lookup only here — eligibility (minimum purchase amount,
+            // usage caps, discount cap, date window) can't be checked
+            // yet since it needs the computed subtotal, which isn't
+            // known until after washing/delivery/addon charges below.
+            // See the eligibility check + discount computation right
+            // before grand_total.
             $voucher_code = null;
+            $voucher = null;
             $discount = 0;
             if (isset($request->voucher_code)) {
-
-                // check voucher
                 $voucher = Voucher::where('code', $request->voucher_code)->active()->first();
-                if ($voucher) {
-
-                    // check taken voucher
-                    $taken = $voucher->voucher_users->count();
-                    if ($taken < $voucher->usage_limit) {
-
-                        // set voucher code
-                        $voucher_code = $request->voucher_code;
-                        $discount = (float) ($voucher->discount_amount ?? 0);
-                    }
-                }
             }
 
             // check if user have subscription
@@ -777,6 +761,33 @@ class BookingController extends Controller
             // on a different subtotal (e.g. including add-ons).
             $sst_percent = $setting->sst_percent ?? 0;
             $tax_charge = round(($washing_charge + $delivery_charge) * ($sst_percent / 100), 2);
+
+            // Voucher eligibility — checked here (not at lookup time
+            // above) now that the subtotal is actually known.
+            // Discount amount is computed directly from the validated
+            // Voucher record (RM flat or % of subtotal, per
+            // computeDiscount()), never trusted from the client — a
+            // valid, correctly-recorded voucher_code previously
+            // produced zero actual discount regardless of these rules,
+            // confirmed in production: order 1353 had
+            // voucher_code="WELCOME" but discount="0.00".
+            $order_subtotal_for_voucher = $washing_charge + $delivery_charge + $addon_charge;
+            $item_count_for_voucher = $request->filled('service_category_id')
+                ? collect($request->items ?? [])->sum('quantity')
+                : (int) $request->pickup_bag_quantity;
+
+            if ($voucher) {
+                $eligibility = $voucher->checkEligibility($user->id, $order_subtotal_for_voucher, $item_count_for_voucher);
+                if ($eligibility['eligible']) {
+                    $voucher_code = $request->voucher_code;
+                    $discount = $voucher->computeDiscount($order_subtotal_for_voucher);
+                }
+                // Not eligible: $voucher_code/$discount stay at their
+                // defaults (null/0) from the lookup block above — the
+                // booking still proceeds, just without the discount,
+                // consistent with how an inactive/not-found code was
+                // already handled before this change.
+            }
 
             // get grand total
             // ---------------

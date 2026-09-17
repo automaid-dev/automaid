@@ -1,0 +1,700 @@
+diff --git a/app/Filament/Resources/SettingResource/Pages/Voucher/CreateVoucher.php b/app/Filament/Resources/SettingResource/Pages/Voucher/CreateVoucher.php
+index 91d95cf..9f160bf 100755
+--- a/app/Filament/Resources/SettingResource/Pages/Voucher/CreateVoucher.php
++++ b/app/Filament/Resources/SettingResource/Pages/Voucher/CreateVoucher.php
+@@ -5,9 +5,11 @@
+ use App\Filament\Resources\SettingResource;
+ use Filament\Actions;
+ use Filament\Forms\Components\Actions as FormActions;
++use Filament\Forms\Components\Checkbox;
+ use Filament\Forms\Components\DatePicker;
+ use Filament\Forms\Components\Grid;
+ use Filament\Forms\Components\Placeholder;
++use Filament\Forms\Components\Radio;
+ use Filament\Forms\Components\Section;
+ use Filament\Forms\Components\Select;
+ use Filament\Forms\Components\Textarea;
+@@ -56,7 +58,33 @@ protected function getFormActions(): array
+      */
+     protected function handleRecordCreation(array $data): Voucher
+     {
+-        return Voucher::create($data);
++        return Voucher::create($this->prepareVoucherData($data));
++    }
++
++    /**
++     * The three usage-limit checkboxes (enable_usage_limit,
++     * enable_usage_limit_per_customer, enable_max_discount_amount_cap)
++     * are form-only toggles, not real Voucher columns — this strips
++     * them out and, for any left unchecked, nulls the corresponding
++     * real value column so a stale number from a previously-checked
++     * box can never silently linger as an enforced limit.
++     *
++     * @param  array $data
++     * @return array
++     */
++    protected function prepareVoucherData(array $data): array
++    {
++        foreach ([
++            'enable_usage_limit' => 'usage_limit',
++            'enable_usage_limit_per_customer' => 'usage_limit_per_customer',
++            'enable_max_discount_amount_cap' => 'max_discount_amount_cap',
++        ] as $checkboxKey => $valueKey) {
++            if (empty($data[$checkboxKey])) {
++                $data[$valueKey] = null;
++            }
++            unset($data[$checkboxKey]);
++        }
++        return $data;
+     }
+ 
+     /**
+@@ -115,10 +143,6 @@ public function form(Form $form): Form
+                                         ->label('Discount amount')
+                                         ->numeric()
+                                         ->placeholder('e.g., 20'),
+-                                    TextInput::make('usage_limit')
+-                                        ->label('Usage Limit')
+-                                        ->numeric()
+-                                        ->placeholder('e.g., 100'),
+                                     Select::make('status')
+                                         ->label('Status')
+                                         ->placeholder('Select status')
+@@ -142,6 +166,78 @@ public function form(Form $form): Form
+                     ])->columnSpan(1),
+                 ]),
+ 
++            // Minimum purchase requirements — exactly one of these
++            // three applies at a time (radio, not checkboxes).
++            Section::make('Minimum Purchase Requirements')
++                ->schema([
++                    Radio::make('minimum_requirement_type')
++                        ->label(false)
++                        ->options([
++                            Voucher::MIN_REQUIREMENT_NONE => 'No minimum requirements',
++                            Voucher::MIN_REQUIREMENT_AMOUNT => 'Minimum purchase amount',
++                            Voucher::MIN_REQUIREMENT_ITEMS => 'Minimum total items in order',
++                        ])
++                        ->default(Voucher::MIN_REQUIREMENT_NONE)
++                        ->live(),
++                    TextInput::make('minimum_purchase_amount')
++                        ->label('Minimum amount')
++                        ->prefix('RM')
++                        ->numeric()
++                        ->placeholder('e.g., 50')
++                        ->visible(fn ($get) => $get('minimum_requirement_type') === Voucher::MIN_REQUIREMENT_AMOUNT),
++                    TextInput::make('minimum_total_items')
++                        ->label('Minimum total items (bags/pcs)')
++                        ->numeric()
++                        ->placeholder('e.g., 3')
++                        ->visible(fn ($get) => $get('minimum_requirement_type') === Voucher::MIN_REQUIREMENT_ITEMS),
++                ]),
++
++            // Maximum usage limit — all three are independent
++            // checkboxes; admin can enable none, some, or all.
++            Section::make('Maximum Usage Limit')
++                ->schema([
++                    Checkbox::make('enable_usage_limit')
++                        ->label('Limit the number of times this discount can be used in total')
++                        ->live(),
++                    TextInput::make('usage_limit')
++                        ->label('Total usage limit')
++                        ->numeric()
++                        ->placeholder('e.g., 100')
++                        ->visible(fn ($get) => $get('enable_usage_limit')),
++                    Checkbox::make('enable_usage_limit_per_customer')
++                        ->label('Limit the number of times this discount can be used per customer')
++                        ->live(),
++                    TextInput::make('usage_limit_per_customer')
++                        ->label('Usage limit per customer')
++                        ->numeric()
++                        ->placeholder('e.g., 1')
++                        ->visible(fn ($get) => $get('enable_usage_limit_per_customer')),
++                    Checkbox::make('enable_max_discount_amount_cap')
++                        ->label('Limit the total discount amount (capped)')
++                        ->live(),
++                    TextInput::make('max_discount_amount_cap')
++                        ->label('Total discount amount cap')
++                        ->prefix('RM')
++                        ->numeric()
++                        ->placeholder('e.g., 5000')
++                        ->visible(fn ($get) => $get('enable_max_discount_amount_cap')),
++                ]),
++
++            // Period of usage
++            Section::make('Period of Usage')
++                ->schema([
++                    Grid::make(2)
++                        ->schema([
++                            DatePicker::make('start_at')
++                                ->label('Start Date')
++                                ->native(false),
++                            DatePicker::make('expired_at')
++                                ->label('End Date')
++                                ->native(false)
++                                ->afterOrEqual('start_at'),
++                        ]),
++                ]),
++
+         ]);
+     }
+ }
+diff --git a/app/Filament/Resources/VoucherResource/Pages/EditVoucher.php b/app/Filament/Resources/VoucherResource/Pages/EditVoucher.php
+index 39ac588..afddca1 100755
+--- a/app/Filament/Resources/VoucherResource/Pages/EditVoucher.php
++++ b/app/Filament/Resources/VoucherResource/Pages/EditVoucher.php
+@@ -6,15 +6,18 @@
+ use Filament\Actions;
+ use Filament\Resources\Pages\EditRecord;
+ use Filament\Forms\Components\Actions as FormActions;
++use Filament\Forms\Components\Checkbox;
+ use Filament\Forms\Components\DatePicker;
+ use Filament\Forms\Components\Grid;
+ use Filament\Forms\Components\Placeholder;
++use Filament\Forms\Components\Radio;
+ use Filament\Forms\Components\Section;
+ use Filament\Forms\Components\Select;
+ use Filament\Forms\Components\Textarea;
+ use Filament\Forms\Components\TextInput;
+ use Filament\Forms\Components\View;
+ use Filament\Forms\Form;
++use App\Models\Voucher;
+ 
+ class EditVoucher extends EditRecord
+ {
+@@ -53,6 +56,29 @@ protected function getFormActions(): array
+         return [];
+     }
+ 
++    /**
++     * Strips the three form-only usage-limit checkboxes before saving
++     * and nulls the corresponding real column for any left unchecked —
++     * same reasoning as CreateVoucher's equivalent hook.
++     *
++     * @param  array $data
++     * @return array
++     */
++    protected function mutateFormDataBeforeSave(array $data): array
++    {
++        foreach ([
++            'enable_usage_limit' => 'usage_limit',
++            'enable_usage_limit_per_customer' => 'usage_limit_per_customer',
++            'enable_max_discount_amount_cap' => 'max_discount_amount_cap',
++        ] as $checkboxKey => $valueKey) {
++            if (empty($data[$checkboxKey])) {
++                $data[$valueKey] = null;
++            }
++            unset($data[$checkboxKey]);
++        }
++        return $data;
++    }
++
+     /**
+      * [getRedirectUrl description]
+      * @return [type] [description]
+@@ -107,10 +133,6 @@ public function form(Form $form): Form
+                                         ->formatStateUsing(fn ($state) => number_format((float) $state, 2, '.', ''))
+                                         ->dehydrateStateUsing(fn ($state) => number_format((float) $state, 2, '.', ''))
+                                         ->placeholder('e.g., 20'),
+-                                    TextInput::make('usage_limit')
+-                                        ->label('Usage Limit')
+-                                        ->numeric()
+-                                        ->placeholder('e.g., 100'),
+                                     Select::make('status')
+                                         ->label('Status')
+                                         ->selectablePlaceholder(false)
+@@ -133,6 +155,88 @@ public function form(Form $form): Form
+                     ])->columnSpan(1),
+                 ]),
+ 
++            // Minimum purchase requirements — exactly one of these
++            // three applies at a time (radio, not checkboxes).
++            Section::make('Minimum Purchase Requirements')
++                ->schema([
++                    Radio::make('minimum_requirement_type')
++                        ->label(false)
++                        ->options([
++                            Voucher::MIN_REQUIREMENT_NONE => 'No minimum requirements',
++                            Voucher::MIN_REQUIREMENT_AMOUNT => 'Minimum purchase amount',
++                            Voucher::MIN_REQUIREMENT_ITEMS => 'Minimum total items in order',
++                        ])
++                        ->default(Voucher::MIN_REQUIREMENT_NONE)
++                        ->live(),
++                    TextInput::make('minimum_purchase_amount')
++                        ->label('Minimum amount')
++                        ->prefix('RM')
++                        ->numeric()
++                        ->placeholder('e.g., 50')
++                        ->visible(fn ($get) => $get('minimum_requirement_type') === Voucher::MIN_REQUIREMENT_AMOUNT),
++                    TextInput::make('minimum_total_items')
++                        ->label('Minimum total items (bags/pcs)')
++                        ->numeric()
++                        ->placeholder('e.g., 3')
++                        ->visible(fn ($get) => $get('minimum_requirement_type') === Voucher::MIN_REQUIREMENT_ITEMS),
++                ]),
++
++            // Maximum usage limit — all three are independent
++            // checkboxes; admin can enable none, some, or all. Each
++            // checkbox hydrates its initial checked-state from whether
++            // the underlying column already has a value on this record
++            // — it's a form-only toggle, not a real column itself, so
++            // it can't rely on Filament's normal state hydration.
++            Section::make('Maximum Usage Limit')
++                ->schema([
++                    Checkbox::make('enable_usage_limit')
++                        ->label('Limit the number of times this discount can be used in total')
++                        ->live()
++                        ->dehydrated()
++                        ->afterStateHydrated(fn ($component, $record) => $component->state($record && $record->usage_limit !== null)),
++                    TextInput::make('usage_limit')
++                        ->label('Total usage limit')
++                        ->numeric()
++                        ->placeholder('e.g., 100')
++                        ->visible(fn ($get) => $get('enable_usage_limit')),
++                    Checkbox::make('enable_usage_limit_per_customer')
++                        ->label('Limit the number of times this discount can be used per customer')
++                        ->live()
++                        ->dehydrated()
++                        ->afterStateHydrated(fn ($component, $record) => $component->state($record && $record->usage_limit_per_customer !== null)),
++                    TextInput::make('usage_limit_per_customer')
++                        ->label('Usage limit per customer')
++                        ->numeric()
++                        ->placeholder('e.g., 1')
++                        ->visible(fn ($get) => $get('enable_usage_limit_per_customer')),
++                    Checkbox::make('enable_max_discount_amount_cap')
++                        ->label('Limit the total discount amount (capped)')
++                        ->live()
++                        ->dehydrated()
++                        ->afterStateHydrated(fn ($component, $record) => $component->state($record && $record->max_discount_amount_cap !== null)),
++                    TextInput::make('max_discount_amount_cap')
++                        ->label('Total discount amount cap')
++                        ->prefix('RM')
++                        ->numeric()
++                        ->placeholder('e.g., 5000')
++                        ->visible(fn ($get) => $get('enable_max_discount_amount_cap')),
++                ]),
++
++            // Period of usage
++            Section::make('Period of Usage')
++                ->schema([
++                    Grid::make(2)
++                        ->schema([
++                            DatePicker::make('start_at')
++                                ->label('Start Date')
++                                ->native(false),
++                            DatePicker::make('expired_at')
++                                ->label('End Date')
++                                ->native(false)
++                                ->afterOrEqual('start_at'),
++                        ]),
++                ]),
++
+         ]);
+     }
+ }
+diff --git a/app/Http/Controllers/Api/Customer/BookingController.php b/app/Http/Controllers/Api/Customer/BookingController.php
+index e2ea248..2b6d859 100644
+--- a/app/Http/Controllers/Api/Customer/BookingController.php
++++ b/app/Http/Controllers/Api/Customer/BookingController.php
+@@ -701,33 +701,17 @@ public function schedule(Request $request)
+ 
+             // check voucher code
+             // ------------------
+-            // Discount amount is now read directly from the validated
+-            // Voucher record itself, not trusted from the client — the
+-            // same class of gap already fixed for SST/washing/delivery
+-            // charges elsewhere in this method. Previously $discount
+-            // came from `$request->discount ?? 0` entirely separately
+-            // from this block, meaning a valid, correctly-recorded
+-            // voucher_code produced zero actual discount unless the
+-            // client happened to also send a matching `discount` value
+-            // — confirmed in production: order 1353 has
+-            // voucher_code="WELCOME" but discount="0.00".
++            // Lookup only here — eligibility (minimum purchase amount,
++            // usage caps, discount cap, date window) can't be checked
++            // yet since it needs the computed subtotal, which isn't
++            // known until after washing/delivery/addon charges below.
++            // See the eligibility check + discount computation right
++            // before grand_total.
+             $voucher_code = null;
++            $voucher = null;
+             $discount = 0;
+             if (isset($request->voucher_code)) {
+-
+-                // check voucher
+                 $voucher = Voucher::where('code', $request->voucher_code)->active()->first();
+-                if ($voucher) {
+-
+-                    // check taken voucher
+-                    $taken = $voucher->voucher_users->count();
+-                    if ($taken < $voucher->usage_limit) {
+-
+-                        // set voucher code
+-                        $voucher_code = $request->voucher_code;
+-                        $discount = (float) ($voucher->discount_amount ?? 0);
+-                    }
+-                }
+             }
+ 
+             // check if user have subscription
+@@ -778,6 +762,33 @@ public function schedule(Request $request)
+             $sst_percent = $setting->sst_percent ?? 0;
+             $tax_charge = round(($washing_charge + $delivery_charge) * ($sst_percent / 100), 2);
+ 
++            // Voucher eligibility — checked here (not at lookup time
++            // above) now that the subtotal is actually known.
++            // Discount amount is computed directly from the validated
++            // Voucher record (RM flat or % of subtotal, per
++            // computeDiscount()), never trusted from the client — a
++            // valid, correctly-recorded voucher_code previously
++            // produced zero actual discount regardless of these rules,
++            // confirmed in production: order 1353 had
++            // voucher_code="WELCOME" but discount="0.00".
++            $order_subtotal_for_voucher = $washing_charge + $delivery_charge + $addon_charge;
++            $item_count_for_voucher = $request->filled('service_category_id')
++                ? collect($request->items ?? [])->sum('quantity')
++                : (int) $request->pickup_bag_quantity;
++
++            if ($voucher) {
++                $eligibility = $voucher->checkEligibility($user->id, $order_subtotal_for_voucher, $item_count_for_voucher);
++                if ($eligibility['eligible']) {
++                    $voucher_code = $request->voucher_code;
++                    $discount = $voucher->computeDiscount($order_subtotal_for_voucher);
++                }
++                // Not eligible: $voucher_code/$discount stay at their
++                // defaults (null/0) from the lookup block above — the
++                // booking still proceeds, just without the discount,
++                // consistent with how an inactive/not-found code was
++                // already handled before this change.
++            }
++
+             // get grand total
+             // ---------------
+             $grand_total = ($washing_charge + $delivery_charge + $addon_charge + $tax_charge + $insurance_fee) - ($discount + $addon_discount + $birthday_reward);
+diff --git a/app/Http/Controllers/Webhook/FiuuController.php b/app/Http/Controllers/Webhook/FiuuController.php
+index fdc874c..26bebd4 100644
+--- a/app/Http/Controllers/Webhook/FiuuController.php
++++ b/app/Http/Controllers/Webhook/FiuuController.php
+@@ -401,17 +401,35 @@ public function getNotification(Request $request)
+                         // get voucher info
+                         $voucher = Voucher::where('code', $order->voucher_code)->active()->first();
+ 
+-                        // check taken voucher
+-                        $taken = $voucher->voucher_users->count();
+-                        if ($taken && $taken < $voucher->usage_limit) {
+-
+-                            // insert voucher user
++                        // Record this redemption — eligibility (usage
++                        // caps, discount cap, minimum purchase, date
++                        // window) was already enforced once, correctly,
++                        // at booking-creation time in
++                        // BookingController::schedule(). This is just
++                        // recording that it happened, so it must not
++                        // re-gate on the same limits again here.
++                        //
++                        // Previously this was `if ($taken && $taken <
++                        // $voucher->usage_limit)` — broken two ways:
++                        // $taken is 0 on a voucher's very first use, and
++                        // 0 is falsy in PHP, so the very first
++                        // redemption of any voucher was silently never
++                        // recorded at all. And with usage_limit now
++                        // nullable (unlimited), PHP compares an int to
++                        // null as 0, so `$taken < null` is false for
++                        // any $taken >= 0 — meaning an "unlimited"
++                        // voucher would never get its usage recorded
++                        // either.
++                        if ($voucher) {
+                             $voucher_user = VoucherUser::firstOrCreate(
+                                 [
+                                     'voucher_id' => $voucher->id, 
+                                     'user_id' => $order->user_id, 
+                                     'order_id' => $order->id,
+                                 ],
++                                [
++                                    'discount_amount' => $order->discount,
++                                ]
+                             );
+                         }
+                     }
+@@ -905,17 +923,35 @@ public function getCallback(Request $request)
+                         // get voucher info
+                         $voucher = Voucher::where('code', $order->voucher_code)->active()->first();
+ 
+-                        // check taken voucher
+-                        $taken = $voucher->voucher_users->count();
+-                        if ($taken && $taken < $voucher->usage_limit) {
+-
+-                            // insert voucher user
++                        // Record this redemption — eligibility (usage
++                        // caps, discount cap, minimum purchase, date
++                        // window) was already enforced once, correctly,
++                        // at booking-creation time in
++                        // BookingController::schedule(). This is just
++                        // recording that it happened, so it must not
++                        // re-gate on the same limits again here.
++                        //
++                        // Previously this was `if ($taken && $taken <
++                        // $voucher->usage_limit)` — broken two ways:
++                        // $taken is 0 on a voucher's very first use, and
++                        // 0 is falsy in PHP, so the very first
++                        // redemption of any voucher was silently never
++                        // recorded at all. And with usage_limit now
++                        // nullable (unlimited), PHP compares an int to
++                        // null as 0, so `$taken < null` is false for
++                        // any $taken >= 0 — meaning an "unlimited"
++                        // voucher would never get its usage recorded
++                        // either.
++                        if ($voucher) {
+                             $voucher_user = VoucherUser::firstOrCreate(
+                                 [
+                                     'voucher_id' => $voucher->id, 
+                                     'user_id' => $order->user_id, 
+                                     'order_id' => $order->id,
+                                 ],
++                                [
++                                    'discount_amount' => $order->discount,
++                                ]
+                             );
+                         }
+                     }
+diff --git a/app/Http/Controllers/Webhook/GkashController.php b/app/Http/Controllers/Webhook/GkashController.php
+index 8eae6b0..6a8088d 100644
+--- a/app/Http/Controllers/Webhook/GkashController.php
++++ b/app/Http/Controllers/Webhook/GkashController.php
+@@ -296,18 +296,26 @@ public function getNotification(Request $request)
+                 $order->save();
+             }
+ 
+-            // check voucher
++            // check voucher — recorded unconditionally, same reasoning
++            // as the matching fix in FiuuController::getNotification:
++            // eligibility was already enforced once, correctly, at
++            // booking-creation time, and the previous `$taken &&
++            // $taken < usage_limit` gate silently never recorded a
++            // voucher's very first use (falsy 0) or any use of an
++            // unlimited (null usage_limit) voucher.
+             if ($order->voucher_code) {
+                 $voucher = Voucher::where('code', $order->voucher_code)->active()->first();
+                 if ($voucher) {
+-                    $taken = $voucher->voucher_users->count();
+-                    if ($taken && $taken < $voucher->usage_limit) {
+-                        VoucherUser::firstOrCreate([
++                    VoucherUser::firstOrCreate(
++                        [
+                             'voucher_id' => $voucher->id,
+                             'user_id' => $order->user_id,
+                             'order_id' => $order->id,
+-                        ]);
+-                    }
++                        ],
++                        [
++                            'discount_amount' => $order->discount,
++                        ]
++                    );
+                 }
+             }
+ 
+diff --git a/app/Models/Voucher.php b/app/Models/Voucher.php
+index d2a9e77..1398d0e 100755
+--- a/app/Models/Voucher.php
++++ b/app/Models/Voucher.php
+@@ -18,6 +18,12 @@ class Voucher extends Model implements Auditable
+     const ACTIVE = 'active';
+     const INACTIVE = 'inactive';
+ 
++    // Minimum purchase requirement — exactly one applies at a time,
++    // selected via minimum_requirement_type. 'none' means no minimum.
++    const MIN_REQUIREMENT_NONE = 'none';
++    const MIN_REQUIREMENT_AMOUNT = 'amount';
++    const MIN_REQUIREMENT_ITEMS = 'items';
++
+     /**
+      * [booted description]
+      * @return [type] [description]
+@@ -35,7 +41,11 @@ protected static function booted() {
+     }
+ 
+     /**
+-     * [scopeActive description]
++     * Status alone, unchanged — date-range validity (start_at/expired_at)
++     * is checked separately in checkEligibility() below, not folded into
++     * this scope, since callers that need to show/manage a voucher
++     * (e.g. the admin edit screen) still need to find it by status even
++     * outside its active date window.
+      * @param  [type] $query [description]
+      * @return [type]        [description]
+      */
+@@ -44,6 +54,83 @@ public function scopeActive($query)
+         return $query->where('status', self::ACTIVE);
+     }
+ 
++    /**
++     * Checks every voucher rule at once — date window, minimum purchase
++     * requirement, total/per-customer usage limits, and the cumulative
++     * discount amount cap — against a specific customer and order.
++     * Centralizing this here (rather than scattering checks across every
++     * caller) means BookingController and any future caller apply
++     * identical rules.
++     *
++     * @param  int   $userId
++     * @param  float $orderSubtotal   pre-discount amount the minimum purchase requirement checks against
++     * @param  int   $itemCount       bag/piece count the minimum items requirement checks against
++     * @return array{eligible: bool, reason: ?string}
++     */
++    public function checkEligibility(int $userId, float $orderSubtotal, int $itemCount): array
++    {
++        $now = now();
++        if ($this->start_at && $now->lt($this->start_at)) {
++            return ['eligible' => false, 'reason' => 'This voucher is not active yet.'];
++        }
++        if ($this->expired_at && $now->gt($this->expired_at)) {
++            return ['eligible' => false, 'reason' => 'This voucher has expired.'];
++        }
++
++        if ($this->minimum_requirement_type === self::MIN_REQUIREMENT_AMOUNT && $this->minimum_purchase_amount) {
++            if ($orderSubtotal < (float) $this->minimum_purchase_amount) {
++                return ['eligible' => false, 'reason' => 'Minimum purchase amount not met for this voucher.'];
++            }
++        } elseif ($this->minimum_requirement_type === self::MIN_REQUIREMENT_ITEMS && $this->minimum_total_items) {
++            if ($itemCount < (int) $this->minimum_total_items) {
++                return ['eligible' => false, 'reason' => 'Minimum item count not met for this voucher.'];
++            }
++        }
++
++        if ($this->usage_limit !== null) {
++            $totalUsed = $this->voucher_users()->count();
++            if ($totalUsed >= $this->usage_limit) {
++                return ['eligible' => false, 'reason' => 'This voucher has reached its total usage limit.'];
++            }
++        }
++
++        if ($this->usage_limit_per_customer !== null) {
++            $usedByCustomer = $this->voucher_users()->where('user_id', $userId)->count();
++            if ($usedByCustomer >= $this->usage_limit_per_customer) {
++                return ['eligible' => false, 'reason' => 'You have already used this voucher the maximum number of times.'];
++            }
++        }
++
++        if ($this->max_discount_amount_cap !== null) {
++            $totalDiscountGiven = (float) $this->voucher_users()->sum('discount_amount');
++            if ($totalDiscountGiven >= (float) $this->max_discount_amount_cap) {
++                return ['eligible' => false, 'reason' => 'This voucher has reached its total discount cap.'];
++            }
++        }
++
++        return ['eligible' => true, 'reason' => null];
++    }
++
++    /**
++     * Computes the actual discount this voucher would give for an
++     * order — RM flat amount, or a percentage of the subtotal. This is
++     * the single place callers get an actual discount figure from a
++     * Voucher, rather than reading discount_amount/discount_type
++     * directly and re-deriving this logic per call site.
++     *
++     * @param  float $orderSubtotal
++     * @return float
++     */
++    public function computeDiscount(float $orderSubtotal): float
++    {
++        $amount = (float) ($this->discount_amount ?? 0);
++        // discount_type: '1' = RM flat amount, '2' = percentage
++        if ((string) $this->discount_type === '2') {
++            return round($orderSubtotal * ($amount / 100), 2);
++        }
++        return $amount;
++    }
++
+     /**
+      * [voucher_users description]
+      * @return [type] [description]
+diff --git a/database/migrations/2026_09_17_090000_add_voucher_rules_fields.php b/database/migrations/2026_09_17_090000_add_voucher_rules_fields.php
+new file mode 100644
+index 0000000..443f747
+--- /dev/null
++++ b/database/migrations/2026_09_17_090000_add_voucher_rules_fields.php
+@@ -0,0 +1,84 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::table('vouchers', function (Blueprint $table) {
++            // start_at/expired_at previously existed on this table but
++            // were dropped by 2025_05_29_085449_remove_start_end_date_vouchers_table.php
++            // — restored here since "period of usage" needs them again.
++            if (!Schema::hasColumn('vouchers', 'start_at')) {
++                $table->datetime('start_at')->nullable()->after('discount_amount');
++            }
++            if (!Schema::hasColumn('vouchers', 'expired_at')) {
++                $table->datetime('expired_at')->nullable()->after('start_at');
++            }
++
++            // Minimum purchase requirement — exactly one of these
++            // applies at a time, selected via minimum_requirement_type.
++            if (!Schema::hasColumn('vouchers', 'minimum_requirement_type')) {
++                // 'none' | 'amount' | 'items'
++                $table->string('minimum_requirement_type', 20)->default('none')->after('expired_at');
++            }
++            if (!Schema::hasColumn('vouchers', 'minimum_purchase_amount')) {
++                $table->decimal('minimum_purchase_amount', 18, 5)->nullable()->after('minimum_requirement_type');
++            }
++            if (!Schema::hasColumn('vouchers', 'minimum_total_items')) {
++                $table->unsignedInteger('minimum_total_items')->nullable()->after('minimum_purchase_amount');
++            }
++
++            // Maximum usage limit — these three are independent
++            // (admin can enable none, some, or all). usage_limit
++            // (total redemptions across everyone) already existed;
++            // these two are new. NULL on any of the three means that
++            // particular cap is not enforced.
++            if (!Schema::hasColumn('vouchers', 'usage_limit_per_customer')) {
++                $table->unsignedInteger('usage_limit_per_customer')->nullable()->after('usage_limit');
++            }
++            if (!Schema::hasColumn('vouchers', 'max_discount_amount_cap')) {
++                $table->decimal('max_discount_amount_cap', 18, 5)->nullable()->after('usage_limit_per_customer');
++            }
++        });
++
++        Schema::table('voucher_users', function (Blueprint $table) {
++            // Records the actual discount given for THIS specific
++            // redemption — needed to enforce max_discount_amount_cap
++            // accurately (summing this column, rather than depending
++            // on orders.discount, which could in principle be edited
++            // for unrelated reasons after the fact).
++            if (!Schema::hasColumn('voucher_users', 'discount_amount')) {
++                $table->decimal('discount_amount', 18, 5)->nullable()->after('order_id');
++            }
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('vouchers', function (Blueprint $table) {
++            foreach ([
++                'max_discount_amount_cap',
++                'usage_limit_per_customer',
++                'minimum_total_items',
++                'minimum_purchase_amount',
++                'minimum_requirement_type',
++                'expired_at',
++                'start_at',
++            ] as $column) {
++                if (Schema::hasColumn('vouchers', $column)) {
++                    $table->dropColumn($column);
++                }
++            }
++        });
++
++        Schema::table('voucher_users', function (Blueprint $table) {
++            if (Schema::hasColumn('voucher_users', 'discount_amount')) {
++                $table->dropColumn('discount_amount');
++            }
++        });
++    }
++};

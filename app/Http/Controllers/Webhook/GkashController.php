@@ -296,18 +296,26 @@ class GkashController extends Controller
                 $order->save();
             }
 
-            // check voucher
+            // check voucher — recorded unconditionally, same reasoning
+            // as the matching fix in FiuuController::getNotification:
+            // eligibility was already enforced once, correctly, at
+            // booking-creation time, and the previous `$taken &&
+            // $taken < usage_limit` gate silently never recorded a
+            // voucher's very first use (falsy 0) or any use of an
+            // unlimited (null usage_limit) voucher.
             if ($order->voucher_code) {
                 $voucher = Voucher::where('code', $order->voucher_code)->active()->first();
                 if ($voucher) {
-                    $taken = $voucher->voucher_users->count();
-                    if ($taken && $taken < $voucher->usage_limit) {
-                        VoucherUser::firstOrCreate([
+                    VoucherUser::firstOrCreate(
+                        [
                             'voucher_id' => $voucher->id,
                             'user_id' => $order->user_id,
                             'order_id' => $order->id,
-                        ]);
-                    }
+                        ],
+                        [
+                            'discount_amount' => $order->discount,
+                        ]
+                    );
                 }
             }
 

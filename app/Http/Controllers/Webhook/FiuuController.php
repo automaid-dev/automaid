@@ -401,17 +401,35 @@ class FiuuController extends Controller
                         // get voucher info
                         $voucher = Voucher::where('code', $order->voucher_code)->active()->first();
 
-                        // check taken voucher
-                        $taken = $voucher->voucher_users->count();
-                        if ($taken && $taken < $voucher->usage_limit) {
-
-                            // insert voucher user
+                        // Record this redemption — eligibility (usage
+                        // caps, discount cap, minimum purchase, date
+                        // window) was already enforced once, correctly,
+                        // at booking-creation time in
+                        // BookingController::schedule(). This is just
+                        // recording that it happened, so it must not
+                        // re-gate on the same limits again here.
+                        //
+                        // Previously this was `if ($taken && $taken <
+                        // $voucher->usage_limit)` — broken two ways:
+                        // $taken is 0 on a voucher's very first use, and
+                        // 0 is falsy in PHP, so the very first
+                        // redemption of any voucher was silently never
+                        // recorded at all. And with usage_limit now
+                        // nullable (unlimited), PHP compares an int to
+                        // null as 0, so `$taken < null` is false for
+                        // any $taken >= 0 — meaning an "unlimited"
+                        // voucher would never get its usage recorded
+                        // either.
+                        if ($voucher) {
                             $voucher_user = VoucherUser::firstOrCreate(
                                 [
                                     'voucher_id' => $voucher->id, 
                                     'user_id' => $order->user_id, 
                                     'order_id' => $order->id,
                                 ],
+                                [
+                                    'discount_amount' => $order->discount,
+                                ]
                             );
                         }
                     }
@@ -905,17 +923,35 @@ class FiuuController extends Controller
                         // get voucher info
                         $voucher = Voucher::where('code', $order->voucher_code)->active()->first();
 
-                        // check taken voucher
-                        $taken = $voucher->voucher_users->count();
-                        if ($taken && $taken < $voucher->usage_limit) {
-
-                            // insert voucher user
+                        // Record this redemption — eligibility (usage
+                        // caps, discount cap, minimum purchase, date
+                        // window) was already enforced once, correctly,
+                        // at booking-creation time in
+                        // BookingController::schedule(). This is just
+                        // recording that it happened, so it must not
+                        // re-gate on the same limits again here.
+                        //
+                        // Previously this was `if ($taken && $taken <
+                        // $voucher->usage_limit)` — broken two ways:
+                        // $taken is 0 on a voucher's very first use, and
+                        // 0 is falsy in PHP, so the very first
+                        // redemption of any voucher was silently never
+                        // recorded at all. And with usage_limit now
+                        // nullable (unlimited), PHP compares an int to
+                        // null as 0, so `$taken < null` is false for
+                        // any $taken >= 0 — meaning an "unlimited"
+                        // voucher would never get its usage recorded
+                        // either.
+                        if ($voucher) {
                             $voucher_user = VoucherUser::firstOrCreate(
                                 [
                                     'voucher_id' => $voucher->id, 
                                     'user_id' => $order->user_id, 
                                     'order_id' => $order->id,
                                 ],
+                                [
+                                    'discount_amount' => $order->discount,
+                                ]
                             );
                         }
                     }

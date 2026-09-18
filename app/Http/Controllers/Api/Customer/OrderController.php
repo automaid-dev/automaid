@@ -57,6 +57,13 @@ class OrderController extends Controller
                 'customer_order_statuses',
                 'qrcode_users.qrcode',
                 'step_photos',
+                // Added so the app can show refund status (is_refunded,
+                // refund_amount, refunded_at) on the order detail screen
+                // — previously not loaded at all, so a refunded order
+                // looked identical to a plain cancelled one there, with
+                // the push notification being the only place refund
+                // status was ever visible to the customer.
+                'payment',
             ]);
             $data['order'] = $order;
             return response()->json([

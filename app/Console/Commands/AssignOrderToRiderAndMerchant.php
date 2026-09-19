@@ -10,9 +10,7 @@ use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\OrderStatus;
 use App\Models\Rider;
-use App\Models\Setting;
 use App\Models\User;
-use App\Services\OneSignalService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -738,7 +736,7 @@ class AssignOrderToRiderAndMerchant extends Command
                 $merchantJobExists = AssignJob::where('order_id', $order->id)
                     ->where('code', OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE)
                     ->exists();
-                if ($first_check && $total_riders == 0 && $total_merchants == 0 && !$riderJobExists && !$merchantJobExists) {
+                if ($first_check && $total_riders == 0 && $total_merchants == 0 && !$riderJobExists && !$merchantJobExists && !$order->is_pending_assign) {
 
                     // set to admin pending assign
                     $order->is_pending_assign = true;
@@ -822,12 +820,13 @@ class AssignOrderToRiderAndMerchant extends Command
     }
 
     /**
-     * Emails the admin (Settings > Admin Email) when an order needs
-     * manual rider/merchant assignment — covers the "system needs to
-     * send email notification to admin" requirement. WhatsApp
-     * notification isn't included here — that needs WhatsApp Business
-     * API credentials this codebase doesn't currently have configured;
-     * email is the reliable channel available right now.
+     * Alerts the admin (via Telegram — see TelegramService) when an
+     * order needs manual rider/merchant assignment. Previously sent via
+     * OneSignal email, which burned through OneSignal's send quota
+     * heavily once combined with the repeat-notification bug fixed
+     * above — Telegram's Bot API has no per-message quota or cost at
+     * all, which is the specific reason this moved off OneSignal rather
+     * than just fixing the repeat bug alone.
      *
      * @param  \App\Models\Order $order
      * @param  string $reason
@@ -835,27 +834,13 @@ class AssignOrderToRiderAndMerchant extends Command
      */
     protected function notifyAdminPendingAssign(Order $order, string $reason): void
     {
-        try {
-            $setting = Setting::find(1);
-            $adminEmail = $setting->admin_email ?? null;
-            if (!$adminEmail) {
-                return;
-            }
+        $message = sprintf(
+            "⚠️ <b>Order #%s needs manual assignment</b>\n%s\nReason: %s",
+            $order->id,
+            $order->series_no ?? '',
+            $reason
+        );
 
-            $subject = 'Auto Maid: Order #' . $order->id . ' needs manual assignment';
-            $body = sprintf(
-                '<p>Order #%s (%s) could not be auto-assigned to a rider/merchant.</p><p>Reason: %s</p><p>Please assign manually from the admin panel: Orders &gt; %s.</p>',
-                $order->id,
-                $order->series_no ?? '',
-                $reason,
-                $order->id
-            );
-
-            (new OneSignalService())->sendEmail($adminEmail, $subject, $body);
-        } catch (\Throwable $th) {
-            // Deliberately swallow — a failed admin notification email
-            // must never block the assignment cron from continuing to
-            // process the rest of the queue.
-        }
+        (new \App\Services\TelegramService())->notifyAdmin($message);
     }
 }

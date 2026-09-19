@@ -92,6 +92,18 @@ return [
         'environment' => env('GKASH_ENVIRONMENT', 'sandbox'),
     ],
 
+    'telegram' => [
+        // Create a bot via @BotFather on Telegram (free, ~2 minutes),
+        // add it to whichever group/chat admin actually watches, then
+        // get that chat's ID (easiest way: message the bot/group, then
+        // GET https://api.telegram.org/bot<token>/getUpdates and read
+        // the chat.id from the response). No per-message quota or cost
+        // — this replaces OneSignal for admin-facing operational alerts
+        // specifically because of that.
+        'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+        'admin_chat_id' => env('TELEGRAM_ADMIN_CHAT_ID'),
+    ],
+
     'rms' => [
         'merchant_id' => env('RMS_MERCHANT_ID', 'SB_payandwash'),
         'sub_merchant_id' => env('RMS_SUB_MERCHANT_ID', 'SB_payandwash'),

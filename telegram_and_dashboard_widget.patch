@@ -1,0 +1,239 @@
+diff --git a/app/Console/Commands/AssignOrderToRiderAndMerchant.php b/app/Console/Commands/AssignOrderToRiderAndMerchant.php
+index 6503ee7..ff4467e 100644
+--- a/app/Console/Commands/AssignOrderToRiderAndMerchant.php
++++ b/app/Console/Commands/AssignOrderToRiderAndMerchant.php
+@@ -10,9 +10,7 @@
+ use App\Models\Order;
+ use App\Models\OrderStatus;
+ use App\Models\Rider;
+-use App\Models\Setting;
+ use App\Models\User;
+-use App\Services\OneSignalService;
+ use Carbon\Carbon;
+ use Illuminate\Console\Command;
+ use Illuminate\Support\Facades\DB;
+@@ -822,12 +820,13 @@ public function handle()
+     }
+ 
+     /**
+-     * Emails the admin (Settings > Admin Email) when an order needs
+-     * manual rider/merchant assignment — covers the "system needs to
+-     * send email notification to admin" requirement. WhatsApp
+-     * notification isn't included here — that needs WhatsApp Business
+-     * API credentials this codebase doesn't currently have configured;
+-     * email is the reliable channel available right now.
++     * Alerts the admin (via Telegram — see TelegramService) when an
++     * order needs manual rider/merchant assignment. Previously sent via
++     * OneSignal email, which burned through OneSignal's send quota
++     * heavily once combined with the repeat-notification bug fixed
++     * above — Telegram's Bot API has no per-message quota or cost at
++     * all, which is the specific reason this moved off OneSignal rather
++     * than just fixing the repeat bug alone.
+      *
+      * @param  \App\Models\Order $order
+      * @param  string $reason
+@@ -835,27 +834,13 @@ public function handle()
+      */
+     protected function notifyAdminPendingAssign(Order $order, string $reason): void
+     {
+-        try {
+-            $setting = Setting::find(1);
+-            $adminEmail = $setting->admin_email ?? null;
+-            if (!$adminEmail) {
+-                return;
+-            }
+-
+-            $subject = 'Auto Maid: Order #' . $order->id . ' needs manual assignment';
+-            $body = sprintf(
+-                '<p>Order #%s (%s) could not be auto-assigned to a rider/merchant.</p><p>Reason: %s</p><p>Please assign manually from the admin panel: Orders &gt; %s.</p>',
+-                $order->id,
+-                $order->series_no ?? '',
+-                $reason,
+-                $order->id
+-            );
+-
+-            (new OneSignalService())->sendEmail($adminEmail, $subject, $body);
+-        } catch (\Throwable $th) {
+-            // Deliberately swallow — a failed admin notification email
+-            // must never block the assignment cron from continuing to
+-            // process the rest of the queue.
+-        }
++        $message = sprintf(
++            "⚠️ <b>Order #%s needs manual assignment</b>\n%s\nReason: %s",
++            $order->id,
++            $order->series_no ?? '',
++            $reason
++        );
++
++        (new \App\Services\TelegramService())->notifyAdmin($message);
+     }
+ }
+diff --git a/app/Filament/Widgets/PendingAssignmentWidget.php b/app/Filament/Widgets/PendingAssignmentWidget.php
+new file mode 100644
+index 0000000..3f6ca4d
+--- /dev/null
++++ b/app/Filament/Widgets/PendingAssignmentWidget.php
+@@ -0,0 +1,75 @@
++<?php
++
++namespace App\Filament\Widgets;
++
++use App\Models\Order;
++use Carbon\Carbon;
++use Filament\Tables;
++use Filament\Tables\Table;
++use Filament\Tables\Columns\TextColumn;
++use Filament\Tables\Actions\Action;
++use Filament\Widgets\TableWidget as BaseWidget;
++
++/**
++ * Shows every order currently marked is_pending_assign = true — i.e.
++ * AssignOrderToRiderAndMerchant gave up finding a rider/merchant and a
++ * human needs to assign it manually. This is the passive, always-visible
++ * counterpart to the Telegram alert that fires at the moment an order
++ * first becomes stuck (see AssignOrderToRiderAndMerchant::notifyAdminPendingAssign) —
++ * the alert can be missed or scrolled past; this widget can't be, as
++ * long as admin looks at the dashboard.
++ */
++class PendingAssignmentWidget extends BaseWidget
++{
++    protected static ?string $heading = '⚠️ Orders Needing Manual Assignment';
++
++    // Negative sort = shows near the top of the dashboard, ahead of the
++    // general stats/charts widgets — this is meant to be acted on, not
++    // buried below routine reporting.
++    protected static ?int $sort = -10;
++
++    protected int|string|array $columnSpan = 'full';
++
++    public function table(Table $table): Table
++    {
++        return $table
++            ->query(
++                Order::where('is_pending_assign', true)
++                    ->where('order_type', Order::BOOKING)
++                    ->whereNotIn('status', [Order::CANCELLED])
++                    ->with('user')
++                    ->latest()
++            )
++            ->columns([
++                TextColumn::make('id')
++                    ->label('Order ID')
++                    ->searchable()
++                    ->sortable(),
++                TextColumn::make('user.name')
++                    ->label('Customer')
++                    ->searchable(),
++                TextColumn::make('created_at')
++                    ->label('Order Placed')
++                    ->formatStateUsing(fn ($state) => Carbon::parse($state)->format('d M Y, h:ia'))
++                    ->sortable(),
++                TextColumn::make('pending_since')
++                    ->label('Pending For')
++                    ->getStateUsing(fn ($record) => $record->updated_at?->diffForHumans(null, true) . ' ago')
++                    ->color('danger')
++                    ->weight('bold'),
++                TextColumn::make('grand_total')
++                    ->label('Amount (RM)')
++                    ->money('MYR', divideBy: 1),
++            ])
++            ->actions([
++                Action::make('assign')
++                    ->label('Assign Now')
++                    ->icon('heroicon-o-user-plus')
++                    ->url(fn (Order $record) => route('filament.admin.resources.orders.edit', $record))
++                    ->color('primary'),
++            ])
++            ->emptyStateHeading('Nothing pending — all orders are assigned')
++            ->emptyStateIcon('heroicon-o-check-circle')
++            ->poll('60s');
++    }
++}
+diff --git a/app/Services/TelegramService.php b/app/Services/TelegramService.php
+new file mode 100644
+index 0000000..fb106ca
+--- /dev/null
++++ b/app/Services/TelegramService.php
+@@ -0,0 +1,59 @@
++<?php
++
++namespace App\Services;
++
++use Illuminate\Support\Facades\Http;
++use Illuminate\Support\Facades\Log;
++
++/**
++ * Sends a message to the admin Telegram chat via the Bot API. Deliberately
++ * tiny — just the one method this app actually needs (sendMessage), not a
++ * general-purpose Telegram client. See config/services.php's 'telegram'
++ * block for how to get the bot token and chat ID.
++ */
++class TelegramService
++{
++    protected ?string $botToken;
++    protected ?string $adminChatId;
++
++    public function __construct()
++    {
++        $this->botToken = config('services.telegram.bot_token');
++        $this->adminChatId = config('services.telegram.admin_chat_id');
++    }
++
++    /**
++     * @param  string $message  Supports Telegram's HTML parse mode (<b>, <i>, <a href>, etc.)
++     * @return bool
++     */
++    public function notifyAdmin(string $message): bool
++    {
++        if (!$this->botToken || !$this->adminChatId) {
++            Log::warning('TelegramService::notifyAdmin skipped — bot token or admin chat ID not configured.');
++            return false;
++        }
++
++        try {
++            $response = Http::post("https://api.telegram.org/bot{$this->botToken}/sendMessage", [
++                'chat_id' => $this->adminChatId,
++                'text' => $message,
++                'parse_mode' => 'HTML',
++            ]);
++
++            if (!$response->successful()) {
++                Log::warning('TelegramService::notifyAdmin failed', [
++                    'status' => $response->status(),
++                    'body' => $response->json(),
++                ]);
++            }
++
++            return $response->successful();
++        } catch (\Throwable $th) {
++            // Same reasoning as every other admin-notification call site
++            // in this app — a failed notification must never bubble up
++            // and break whatever operation was trying to send it.
++            Log::warning('TelegramService::notifyAdmin exception', ['message' => $th->getMessage()]);
++            return false;
++        }
++    }
++}
+diff --git a/config/services.php b/config/services.php
+index 670fe63..000da43 100644
+--- a/config/services.php
++++ b/config/services.php
+@@ -92,6 +92,18 @@
+         'environment' => env('GKASH_ENVIRONMENT', 'sandbox'),
+     ],
+ 
++    'telegram' => [
++        // Create a bot via @BotFather on Telegram (free, ~2 minutes),
++        // add it to whichever group/chat admin actually watches, then
++        // get that chat's ID (easiest way: message the bot/group, then
++        // GET https://api.telegram.org/bot<token>/getUpdates and read
++        // the chat.id from the response). No per-message quota or cost
++        // — this replaces OneSignal for admin-facing operational alerts
++        // specifically because of that.
++        'bot_token' => env('TELEGRAM_BOT_TOKEN'),
++        'admin_chat_id' => env('TELEGRAM_ADMIN_CHAT_ID'),
++    ],
++
+     'rms' => [
+         'merchant_id' => env('RMS_MERCHANT_ID', 'SB_payandwash'),
+         'sub_merchant_id' => env('RMS_SUB_MERCHANT_ID', 'SB_payandwash'),

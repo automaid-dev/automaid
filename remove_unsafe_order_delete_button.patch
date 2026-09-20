@@ -1,0 +1,30 @@
+diff --git a/app/Filament/Resources/OrderResource.php b/app/Filament/Resources/OrderResource.php
+index 733a810..d1f27d8 100644
+--- a/app/Filament/Resources/OrderResource.php
++++ b/app/Filament/Resources/OrderResource.php
+@@ -210,8 +210,23 @@ public static function table(Tables\Table $table): Tables\Table
+             ])
+             ->actions([
+                 Tables\Actions\EditAction::make()->label(''),
+-                Tables\Actions\DeleteAction::make()->label(''),
+-
++                // Deliberately removed the row-level DeleteAction that
++                // used to sit here. It had no ->action() override, so
++                // it fell through to Filament's default behavior —
++                // $record->delete(), a genuine soft-delete since Order
++                // uses SoftDeletes — with no confirmation customization,
++                // no reason tracking, and no updated_by attribution.
++                // An unlabeled icon button with that behavior is a
++                // trap: it's how two fully valid, already-paid orders
++                // (#1350/#1351) ended up soft-deleted and invisible
++                // everywhere, including crashing the Transaction detail
++                // page for their linked transactions. "Cancel Order" on
++                // the edit page (EditOrder::getHeaderActions) is the
++                // correct, safe way to cancel an order — a real status
++                // update with refund tracking, activity logging, and
++                // customer notification, never an actual delete. There
++                // was no legitimate use for this second, unsafe path
++                // existing in parallel.
+             ]);
+     }
+ 

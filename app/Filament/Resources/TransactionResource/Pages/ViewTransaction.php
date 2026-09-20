@@ -53,22 +53,22 @@ class ViewTransaction extends ViewRecord
                                             Placeholder::make('label_name')->label(false)->content('Name'),
                                             Placeholder::make('name')
                                                 ->label(false)
-                                                ->content(fn ($record) => $record->order->user->name ?? '-'),
+                                                ->content(fn ($record) => $record->order?->user?->name ?? '-'),
 
                                             Placeholder::make('label_email')->label(false)->content('Email'),
                                             Placeholder::make('email')
                                                 ->label(false)
-                                                ->content(fn ($record) => $record->order->user->email ?? '-'),
+                                                ->content(fn ($record) => $record->order?->user?->email ?? '-'),
 
                                             Placeholder::make('label_phone')->label(false)->content('Phone'),
                                             Placeholder::make('phone')
                                                 ->label(false)
-                                                ->content(fn ($record) => $record->order->user->mobile_no ?? '-'),
+                                                ->content(fn ($record) => $record->order?->user?->mobile_no ?? '-'),
 
                                             Placeholder::make('label_name')->label(false)->content('Subscription'),
                                             Placeholder::make('subscription')
                                                 ->label(false)
-                                                ->content(fn ($record) => $record->order->user->subscribe ? 'Yes' : 'No'),
+                                                ->content(fn ($record) => $record->order?->user?->subscribe ? 'Yes' : 'No'),
                                         ]),
                                 ]),
 
@@ -79,7 +79,7 @@ class ViewTransaction extends ViewRecord
                                             Placeholder::make('label_payment_type')->label(false)->content('Payment Type'),
                                             Placeholder::make('payment_type')
                                                 ->label(false)
-                                                ->content(fn ($record) => $record->payment->payment_method ?? '-'),
+                                                ->content(fn ($record) => $record->payment?->payment_method ?? '-'),
 
                                             Placeholder::make('label_transaction_id')->label(false)->content('Transaction ID'),
                                             Placeholder::make('transaction_id')
@@ -106,19 +106,29 @@ class ViewTransaction extends ViewRecord
                                             Placeholder::make('label_order_type')->label(false)->content('Type'),
                                             Placeholder::make('order_type')
                                                 ->label(false)
-                                                ->content(fn ($record) => $labels[$record->order->order_type ?? null] ?? '-')
+                                                ->content(fn ($record) => $labels[$record->order?->order_type] ?? '-')
                                                 ->extraAttributes(['class' => 'text-right']),
 
                                             Placeholder::make('label_amount')->label(false)->content('Total Amount (RM)'),
                                             Placeholder::make('grand_total')
                                                 ->label(false)
-                                                ->content(fn ($record) => number_format($record->order->grand_total, 2) ?? '-')
+                                                // Was number_format($record->order->grand_total, 2) ?? '-' —
+                                                // the ?? never actually caught a null grand_total, since
+                                                // number_format() itself throws a TypeError on null input
+                                                // (PHP 8.1+, internal functions no longer silently coerce
+                                                // null to a numeric type) rather than returning null for
+                                                // the ?? to catch. This crashed the whole page for any
+                                                // order with no grand_total set — e.g. an order whose
+                                                // payment never actually completed.
+                                                ->content(fn ($record) => $record->order?->grand_total !== null
+                                                    ? number_format($record->order->grand_total, 2)
+                                                    : '-')
                                                 ->extraAttributes(['class' => 'text-right']),
 
                                             Placeholder::make('label_status')->label(false)->content('Status'),
                                             Placeholder::make('status')
                                                 ->label(false)
-                                                ->content(fn ($record) => $record->order->status ?? '-')
+                                                ->content(fn ($record) => $record->order?->status ?? '-')
                                                 ->extraAttributes(['class' => 'text-right']),
                                         ]),
                                 ])                             

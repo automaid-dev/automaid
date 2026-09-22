@@ -40,6 +40,12 @@ class EditOrder extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            Actions\Action::make('viewReceipt')
+                ->label('View Customer Receipt')
+                ->icon('heroicon-o-receipt-percent')
+                ->color('gray')
+                ->url(fn () => route('admin.order.receipt', $this->record))
+                ->openUrlInNewTab(),
             Actions\DeleteAction::make()
                 ->label('Cancel Order')
                 ->modalHeading('Cancel this Order?')

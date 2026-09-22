@@ -77,4 +77,13 @@ Route::get('/documents/announcement-image/{hashslug}', [\App\Http\Controllers\Pu
 Route::middleware(['web', 'auth'])->group(function () {
     Route::post('/admin/settings/upload-terms', [\App\Http\Controllers\Admin\SettingUploadController::class, 'uploadTerms'])
         ->name('admin.settings.upload-terms');
+
+    // Web view of the same receipt BookingReceiptScreen shows in the
+    // customer app — the app's receipt is rendered client-side in
+    // Flutter, so there's no server-side artifact for admin to open
+    // directly; this recreates the same layout/data server-side
+    // instead. See EditOrder::getHeaderActions for the button that
+    // links here.
+    Route::get('/admin/orders/{order}/receipt', [\App\Http\Controllers\Admin\OrderReceiptController::class, 'show'])
+        ->name('admin.order.receipt');
 });

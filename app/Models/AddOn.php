@@ -17,6 +17,10 @@ class AddOn extends Model implements Auditable
 
     const ACTIVE = 'active';
     const INACTIVE = 'inactive';
+
+    const APPLICABLE_NORMAL = 'normal';
+    const APPLICABLE_DRY_CLEANING = 'dry_cleaning';
+    const APPLICABLE_BOTH = 'both';
     
     /**
      * [booted description]
@@ -42,5 +46,19 @@ class AddOn extends Model implements Auditable
     public function scopeActive($query)
     {
         return $query->where('status', self::ACTIVE);
+    }
+
+    /**
+     * Filters to add-ons applicable to a given booking type — an
+     * add-on set to 'both' always matches, regardless of $type.
+     * @param  [type] $query
+     * @param  string $type  self::APPLICABLE_NORMAL or self::APPLICABLE_DRY_CLEANING
+     * @return [type]
+     */
+    public function scopeApplicableTo($query, string $type)
+    {
+        return $query->where(function ($q) use ($type) {
+            $q->where('applicable_to', $type)->orWhere('applicable_to', self::APPLICABLE_BOTH);
+        });
     }
 }

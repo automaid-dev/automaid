@@ -422,8 +422,16 @@ class BookingController extends Controller
                 ]);  
             }
 
-            // get addon lists
-            $addons = AddOn::active()->latest()->get();
+            // get addon lists — filtered by which booking type this is
+            // for, per the admin's applicable_to setting on each add-on.
+            // service_category_id present == dry-cleaning, absent ==
+            // Wash & Fold, matching the exact same convention already
+            // used throughout BookingController::schedule() to
+            // distinguish the two.
+            $type = $request->filled('service_category_id')
+                ? \App\Models\AddOn::APPLICABLE_DRY_CLEANING
+                : \App\Models\AddOn::APPLICABLE_NORMAL;
+            $addons = AddOn::active()->applicableTo($type)->latest()->get();
 
             // return addon info
             $data['addons'] = $addons;

@@ -1,0 +1,32 @@
+diff --git a/app/Http/Controllers/Api/Customer/CoverageController.php b/app/Http/Controllers/Api/Customer/CoverageController.php
+index 8f66fc6..28231d0 100644
+--- a/app/Http/Controllers/Api/Customer/CoverageController.php
++++ b/app/Http/Controllers/Api/Customer/CoverageController.php
+@@ -124,7 +124,7 @@ public function joinWaitingList(Request $request)
+                 ['email' => $request->email],
+                 [
+                     'name' => $request->name,
+-                    'phone' => $request->phone,
++                    'mobile_no' => $request->phone,
+                     'postcode' => $request->postcode,
+                     'status' => WaitingList::ACTIVE,
+                 ]
+diff --git a/app/Models/WaitingList.php b/app/Models/WaitingList.php
+index 1b31125..c7b99a7 100644
+--- a/app/Models/WaitingList.php
++++ b/app/Models/WaitingList.php
+@@ -18,7 +18,13 @@ class WaitingList extends Model implements Auditable
+     protected $fillable = [
+         'name',
+         'email',
+-        'phone',
++        // Renamed from 'phone' by an earlier migration
++        // (renameColumn('phone', 'mobile_no')) — this was left stale
++        // here, which is exactly what caused
++        // CoverageController::joinWaitingList's "Unknown column
++        // 'phone'" error (it was writing 'phone' as a fillable key
++        // into a table that no longer has that column).
++        'mobile_no',
+         'state',
+         'city',
+         'postcode',

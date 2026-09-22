@@ -1,0 +1,25 @@
+diff --git a/app/Filament/Resources/SettingResource/Widgets/AddonList.php b/app/Filament/Resources/SettingResource/Widgets/AddonList.php
+index cbd4764..e3c61c3 100755
+--- a/app/Filament/Resources/SettingResource/Widgets/AddonList.php
++++ b/app/Filament/Resources/SettingResource/Widgets/AddonList.php
+@@ -36,6 +36,20 @@ public function table(Table $table): Table
+                         return number_format((float) $state, 2);
+                     })
+                     ->sortable(),
++                TextColumn::make('applicable_to')
++                    ->label('Applicable To')
++                    ->badge()
++                    ->formatStateUsing(fn (?string $state) => match ($state) {
++                        'normal' => 'Normal Booking',
++                        'dry_cleaning' => 'Dry Cleaning',
++                        default => 'Both',
++                    })
++                    ->color(fn (?string $state) => match ($state) {
++                        'normal' => 'warning',
++                        'dry_cleaning' => 'info',
++                        default => 'gray',
++                    })
++                    ->sortable(),
+                 TextColumn::make('created_at')
+                     ->label('Created at')
+                     ->sortable(),

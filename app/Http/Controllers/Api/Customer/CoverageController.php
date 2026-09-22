@@ -124,7 +124,7 @@ class CoverageController extends Controller
                 ['email' => $request->email],
                 [
                     'name' => $request->name,
-                    'phone' => $request->phone,
+                    'mobile_no' => $request->phone,
                     'postcode' => $request->postcode,
                     'status' => WaitingList::ACTIVE,
                 ]

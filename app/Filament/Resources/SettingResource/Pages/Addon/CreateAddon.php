@@ -108,6 +108,15 @@ class CreateAddon extends CreateRecord
                                         ->label('Price (RM)')
                                         ->numeric()
                                         ->placeholder('e.g., 20'),
+                                    Select::make('applicable_to')
+                                        ->label('Applicable To')
+                                        ->default('both')
+                                        ->options([
+                                            'normal' => 'Normal Booking',
+                                            'dry_cleaning' => 'Dry Cleaning',
+                                            'both' => 'Both',
+                                        ])
+                                        ->required(),
                                     Select::make('status')
                                         ->label('Status')
                                         ->placeholder('Select status')

@@ -1348,6 +1348,23 @@ class EditOrder extends EditRecord
                                         ->content(function () {
                                             $booking = $this->record->booking;
                                             $items = $booking?->items ?? [];
+                                            // Booking.items IS cast to 'array' on the model
+                                            // (confirmed in app/Models/Booking.php), so this
+                                            // shouldn't be necessary in theory — but in
+                                            // practice this Placeholder's closure runs after
+                                            // Livewire rehydrates $this->record from a
+                                            // dehydrated snapshot, and that round-trip doesn't
+                                            // reliably reapply Eloquent casts to nested relation
+                                            // attributes. Confirmed root cause of "foreach()
+                                            // argument must be of type array|object, string
+                                            // given" at this exact line — items was arriving as
+                                            // its raw JSON string instead of a decoded array.
+                                            // Handling both shapes directly here is more
+                                            // reliable than depending on the cast surviving that
+                                            // hydration path.
+                                            if (is_string($items)) {
+                                                $items = json_decode($items, true) ?? [];
+                                            }
                                             if (empty($items)) {
                                                 return new \Illuminate\Support\HtmlString('');
                                             }

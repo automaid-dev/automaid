@@ -105,6 +105,14 @@ class EditAddOn extends EditRecord
                                         ->formatStateUsing(fn ($state) => number_format((float) $state, 2, '.', ''))
                                         ->dehydrateStateUsing(fn ($state) => number_format((float) $state, 2, '.', ''))
                                         ->placeholder('e.g., 20'),
+                                    Select::make('applicable_to')
+                                        ->label('Applicable To')
+                                        ->selectablePlaceholder(false)
+                                        ->options([
+                                            'normal' => 'Normal Booking',
+                                            'dry_cleaning' => 'Dry Cleaning',
+                                            'both' => 'Both',
+                                        ]),
                                     Select::make('status')
                                         ->label('Status')
                                         ->selectablePlaceholder(false)

@@ -1,0 +1,133 @@
+diff --git a/app/Filament/Resources/AddOnResource/Pages/EditAddOn.php b/app/Filament/Resources/AddOnResource/Pages/EditAddOn.php
+index 14fa610..2da8320 100755
+--- a/app/Filament/Resources/AddOnResource/Pages/EditAddOn.php
++++ b/app/Filament/Resources/AddOnResource/Pages/EditAddOn.php
+@@ -105,6 +105,14 @@ public function form(Form $form): Form
+                                         ->formatStateUsing(fn ($state) => number_format((float) $state, 2, '.', ''))
+                                         ->dehydrateStateUsing(fn ($state) => number_format((float) $state, 2, '.', ''))
+                                         ->placeholder('e.g., 20'),
++                                    Select::make('applicable_to')
++                                        ->label('Applicable To')
++                                        ->selectablePlaceholder(false)
++                                        ->options([
++                                            'normal' => 'Normal Booking',
++                                            'dry_cleaning' => 'Dry Cleaning',
++                                            'both' => 'Both',
++                                        ]),
+                                     Select::make('status')
+                                         ->label('Status')
+                                         ->selectablePlaceholder(false)
+diff --git a/app/Filament/Resources/SettingResource/Pages/Addon/CreateAddon.php b/app/Filament/Resources/SettingResource/Pages/Addon/CreateAddon.php
+index 8853494..74ecbe9 100755
+--- a/app/Filament/Resources/SettingResource/Pages/Addon/CreateAddon.php
++++ b/app/Filament/Resources/SettingResource/Pages/Addon/CreateAddon.php
+@@ -108,6 +108,15 @@ public function form(Form $form): Form
+                                         ->label('Price (RM)')
+                                         ->numeric()
+                                         ->placeholder('e.g., 20'),
++                                    Select::make('applicable_to')
++                                        ->label('Applicable To')
++                                        ->default('both')
++                                        ->options([
++                                            'normal' => 'Normal Booking',
++                                            'dry_cleaning' => 'Dry Cleaning',
++                                            'both' => 'Both',
++                                        ])
++                                        ->required(),
+                                     Select::make('status')
+                                         ->label('Status')
+                                         ->placeholder('Select status')
+diff --git a/app/Http/Controllers/Api/Customer/BookingController.php b/app/Http/Controllers/Api/Customer/BookingController.php
+index 2b6d859..a7e440d 100644
+--- a/app/Http/Controllers/Api/Customer/BookingController.php
++++ b/app/Http/Controllers/Api/Customer/BookingController.php
+@@ -422,8 +422,16 @@ public function addOnList(Request $request)
+                 ]);  
+             }
+ 
+-            // get addon lists
+-            $addons = AddOn::active()->latest()->get();
++            // get addon lists — filtered by which booking type this is
++            // for, per the admin's applicable_to setting on each add-on.
++            // service_category_id present == dry-cleaning, absent ==
++            // Wash & Fold, matching the exact same convention already
++            // used throughout BookingController::schedule() to
++            // distinguish the two.
++            $type = $request->filled('service_category_id')
++                ? \App\Models\AddOn::APPLICABLE_DRY_CLEANING
++                : \App\Models\AddOn::APPLICABLE_NORMAL;
++            $addons = AddOn::active()->applicableTo($type)->latest()->get();
+ 
+             // return addon info
+             $data['addons'] = $addons;
+diff --git a/app/Models/AddOn.php b/app/Models/AddOn.php
+index 01a6a3c..4ee6d6b 100755
+--- a/app/Models/AddOn.php
++++ b/app/Models/AddOn.php
+@@ -17,6 +17,10 @@ class AddOn extends Model implements Auditable
+ 
+     const ACTIVE = 'active';
+     const INACTIVE = 'inactive';
++
++    const APPLICABLE_NORMAL = 'normal';
++    const APPLICABLE_DRY_CLEANING = 'dry_cleaning';
++    const APPLICABLE_BOTH = 'both';
+     
+     /**
+      * [booted description]
+@@ -43,4 +47,18 @@ public function scopeActive($query)
+     {
+         return $query->where('status', self::ACTIVE);
+     }
++
++    /**
++     * Filters to add-ons applicable to a given booking type — an
++     * add-on set to 'both' always matches, regardless of $type.
++     * @param  [type] $query
++     * @param  string $type  self::APPLICABLE_NORMAL or self::APPLICABLE_DRY_CLEANING
++     * @return [type]
++     */
++    public function scopeApplicableTo($query, string $type)
++    {
++        return $query->where(function ($q) use ($type) {
++            $q->where('applicable_to', $type)->orWhere('applicable_to', self::APPLICABLE_BOTH);
++        });
++    }
+ }
+diff --git a/database/migrations/2026_09_21_090000_add_applicable_to_add_ons_table.php b/database/migrations/2026_09_21_090000_add_applicable_to_add_ons_table.php
+new file mode 100644
+index 0000000..43856d2
+--- /dev/null
++++ b/database/migrations/2026_09_21_090000_add_applicable_to_add_ons_table.php
+@@ -0,0 +1,31 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::table('add_ons', function (Blueprint $table) {
++            if (!Schema::hasColumn('add_ons', 'applicable_to')) {
++                // 'normal' | 'dry_cleaning' | 'both' — which booking
++                // type(s) this add-on shows up for. Existing add-ons
++                // default to 'both' so nothing already configured
++                // silently disappears from either flow after this
++                // migration runs.
++                $table->string('applicable_to', 20)->default('both')->after('status');
++            }
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('add_ons', function (Blueprint $table) {
++            if (Schema::hasColumn('add_ons', 'applicable_to')) {
++                $table->dropColumn('applicable_to');
++            }
++        });
++    }
++};

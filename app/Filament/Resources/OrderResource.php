@@ -65,7 +65,7 @@ class OrderResource extends Resource
                     ->rowIndex()
                     ->sortable(), 
                 TextColumn::make('series_no')
-                    ->formatStateUsing(fn ($record) => "Date: "."{$record->booking->pickup_date}".'<br>Order #: <strong>'."{$record->id}".'</strong><br>ID: '."{$record->series_no}")
+                    ->formatStateUsing(fn ($record) => "Date: "."{$record->booking?->pickup_date}".'<br>Order #: <strong>'."{$record->id}".'</strong><br>ID: '."{$record->series_no}")
                     ->html()
                     ->label('Orders')
                     ->sortable(),
@@ -73,6 +73,17 @@ class OrderResource extends Resource
                     ->label('Customer')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('id') // must set valid column — service_category_id lives on
+                    // Booking/OrderBooking only, never on Order itself (no such column
+                    // exists on `orders` at all), so this can't bind directly to a
+                    // real Order attribute — same reasoning as the "Assigned To"
+                    // column above. booking.items presence is the reliable signal
+                    // already used elsewhere (EditOrder's own "Dry Cleaning Items"
+                    // section checks the exact same thing).
+                    ->formatStateUsing(fn ($record) => !empty($record->booking?->items) ? 'Dry Cleaning' : 'Wash & Fold')
+                    ->label('Order Type')
+                    ->badge()
+                    ->color(fn ($record) => !empty($record->booking?->items) ? 'info' : 'gray'),
                 TextColumn::make('id') // must set valid column
                     ->formatStateUsing(function ($record) {
                         $riderName = $record->rider->accepted_user->name ?? '-';

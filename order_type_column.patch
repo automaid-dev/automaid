@@ -1,0 +1,26 @@
+diff --git a/app/Filament/Resources/OrderResource.php b/app/Filament/Resources/OrderResource.php
+index d1f27d8..7f38848 100644
+--- a/app/Filament/Resources/OrderResource.php
++++ b/app/Filament/Resources/OrderResource.php
+@@ -65,7 +65,7 @@ public static function table(Tables\Table $table): Tables\Table
+                     ->rowIndex()
+                     ->sortable(), 
+                 TextColumn::make('series_no')
+-                    ->formatStateUsing(fn ($record) => "Date: "."{$record->booking->pickup_date}".'<br>Order #: <strong>'."{$record->id}".'</strong><br>ID: '."{$record->series_no}")
++                    ->formatStateUsing(fn ($record) => "Date: "."{$record->booking?->pickup_date}".'<br>Order #: <strong>'."{$record->id}".'</strong><br>ID: '."{$record->series_no}")
+                     ->html()
+                     ->label('Orders')
+                     ->sortable(),
+@@ -73,6 +73,12 @@ public static function table(Tables\Table $table): Tables\Table
+                     ->label('Customer')
+                     ->searchable()
+                     ->sortable(),
++                TextColumn::make('service_category_id')
++                    ->label('Order Type')
++                    ->formatStateUsing(fn ($state) => $state ? 'Dry Cleaning' : 'Wash & Fold')
++                    ->badge()
++                    ->color(fn ($state) => $state ? 'info' : 'gray')
++                    ->sortable(),
+                 TextColumn::make('id') // must set valid column
+                     ->formatStateUsing(function ($record) {
+                         $riderName = $record->rider->accepted_user->name ?? '-';

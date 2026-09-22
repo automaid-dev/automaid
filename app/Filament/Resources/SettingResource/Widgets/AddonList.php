@@ -36,6 +36,20 @@ class AddonList extends BaseWidget
                         return number_format((float) $state, 2);
                     })
                     ->sortable(),
+                TextColumn::make('applicable_to')
+                    ->label('Applicable To')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state) => match ($state) {
+                        'normal' => 'Normal Booking',
+                        'dry_cleaning' => 'Dry Cleaning',
+                        default => 'Both',
+                    })
+                    ->color(fn (?string $state) => match ($state) {
+                        'normal' => 'warning',
+                        'dry_cleaning' => 'info',
+                        default => 'gray',
+                    })
+                    ->sortable(),
                 TextColumn::make('created_at')
                     ->label('Created at')
                     ->sortable(),

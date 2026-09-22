@@ -18,7 +18,13 @@ class WaitingList extends Model implements Auditable
     protected $fillable = [
         'name',
         'email',
-        'phone',
+        // Renamed from 'phone' by an earlier migration
+        // (renameColumn('phone', 'mobile_no')) — this was left stale
+        // here, which is exactly what caused
+        // CoverageController::joinWaitingList's "Unknown column
+        // 'phone'" error (it was writing 'phone' as a fillable key
+        // into a table that no longer has that column).
+        'mobile_no',
         'state',
         'city',
         'postcode',

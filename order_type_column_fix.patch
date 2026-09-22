@@ -1,0 +1,26 @@
+diff --git a/app/Filament/Resources/OrderResource.php b/app/Filament/Resources/OrderResource.php
+index 7f38848..968f95b 100644
+--- a/app/Filament/Resources/OrderResource.php
++++ b/app/Filament/Resources/OrderResource.php
+@@ -73,12 +73,17 @@ public static function table(Tables\Table $table): Tables\Table
+                     ->label('Customer')
+                     ->searchable()
+                     ->sortable(),
+-                TextColumn::make('service_category_id')
++                TextColumn::make('id') // must set valid column — service_category_id lives on
++                    // Booking/OrderBooking only, never on Order itself (no such column
++                    // exists on `orders` at all), so this can't bind directly to a
++                    // real Order attribute — same reasoning as the "Assigned To"
++                    // column above. booking.items presence is the reliable signal
++                    // already used elsewhere (EditOrder's own "Dry Cleaning Items"
++                    // section checks the exact same thing).
++                    ->formatStateUsing(fn ($record) => !empty($record->booking?->items) ? 'Dry Cleaning' : 'Wash & Fold')
+                     ->label('Order Type')
+-                    ->formatStateUsing(fn ($state) => $state ? 'Dry Cleaning' : 'Wash & Fold')
+                     ->badge()
+-                    ->color(fn ($state) => $state ? 'info' : 'gray')
+-                    ->sortable(),
++                    ->color(fn ($record) => !empty($record->booking?->items) ? 'info' : 'gray'),
+                 TextColumn::make('id') // must set valid column
+                     ->formatStateUsing(function ($record) {
+                         $riderName = $record->rider->accepted_user->name ?? '-';

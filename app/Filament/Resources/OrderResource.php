@@ -56,7 +56,9 @@ class OrderResource extends Resource
                 ->with([
                     'booking',
                     'rider.accepted_user',
+                    'rider_pending.user',
                     'merchant.accepted_user',
+                    'merchant_pending.user.merchant',
                     'commission_transactions.commission',
                 ]))
             ->columns([
@@ -86,8 +88,22 @@ class OrderResource extends Resource
                     ->color(fn ($record) => !empty($record->booking?->items) ? 'info' : 'gray'),
                 TextColumn::make('id') // must set valid column
                     ->formatStateUsing(function ($record) {
-                        $riderName = $record->rider->accepted_user->name ?? '-';
-                        $merchantName = $record->merchant->accepted_user->merchant->company_name ?? '-';
+                        // rider/merchant (Order::rider()/merchant()) only match
+                        // is_accepted=true jobs — a job admin just manually
+                        // assigned starts as pending, same as the auto-assign
+                        // flow, so those relations are correctly null until the
+                        // rider/merchant actually taps Accept. Previously this
+                        // showed a bare "-" for a pending assignment, which
+                        // looked exactly like "nothing was assigned at all" —
+                        // falling back to rider_pending/merchant_pending (also
+                        // AssignJob, matching on code alone rather than
+                        // is_accepted too) shows who it's pending on instead.
+                        $riderName = $record->rider?->accepted_user?->name
+                            ?? ($record->rider_pending?->user?->name ? "{$record->rider_pending->user->name} (Pending)" : null)
+                            ?? '-';
+                        $merchantName = $record->merchant?->accepted_user?->merchant?->company_name
+                            ?? ($record->merchant_pending?->user?->merchant?->company_name ? "{$record->merchant_pending->user->merchant->company_name} (Pending)" : null)
+                            ?? '-';
                         return "Rider: {$riderName}<br>Merchant: {$merchantName}";
                     })
                     ->html()

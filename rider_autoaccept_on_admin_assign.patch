@@ -1,0 +1,227 @@
+diff --git a/app/Filament/Resources/OrderResource/Pages/EditOrder.php b/app/Filament/Resources/OrderResource/Pages/EditOrder.php
+index 73e8f0f..ae7279f 100644
+--- a/app/Filament/Resources/OrderResource/Pages/EditOrder.php
++++ b/app/Filament/Resources/OrderResource/Pages/EditOrder.php
+@@ -308,12 +308,13 @@ protected function getRedirectUrl(): string
+ 
+     /**
+      * Replicates Merchant/OrderController::acceptOrder()'s cascade —
+-     * per explicit request, an admin-assigned merchant job now
++     * per explicit request, an admin-set/confirmed merchant job now
+      * auto-accepts immediately rather than sitting as a pending job
+-     * the merchant has to tap Accept on themselves (rider assignment
+-     * deliberately keeps requiring rider acceptance — this is
+-     * merchant-only). Must run the SAME cascade a real acceptance
+-     * would — marking the current status done, creating the next
++     * the merchant has to tap Accept on themselves. (Rider has its
++     * own equivalent — autoAcceptRiderJob below — added in a later
++     * follow-up that extended this same behavior to rider too.) Must
++     * run the SAME cascade a real acceptance would — marking the
++     * current status done, creating the next
+      * MERCHANT_AWAITING_BAG_DELIVERY status + job, retiring other
+      * pending candidates — not just flip is_accepted, which is
+      * exactly the mistake noted in the comments throughout this
+@@ -352,6 +353,104 @@ protected function autoAcceptMerchantJob(AssignJob $job, OrderStatus $status): v
+         ->update(['is_queue' => false]);
+     }
+ 
++    /**
++     * Replicates Rider/OrderController::acceptOrder()'s full cascade —
++     * per follow-up request, this now applies whenever admin sets
++     * (or re-confirms) a rider assignment, not just a fresh one,
++     * regardless of whether that rider got there via the auto-assign
++     * cron or admin's own selection. Rider's cascade is meaningfully
++     * bigger than merchant's: it also closes out any pending
++     * "customer waiting for rider" job, creates BOTH the next rider
++     * job (ready for pickup) AND a customer-facing job (delivery to
++     * wash outlet), notifies the customer their rider is on the way
++     * (both the Notification and the customer app's own in-app feed,
++     * same dual-write CustomerReadyPickup already does elsewhere),
++     * and gives the pending merchant a heads-up. Skipping any of
++     * these would leave a real gap downstream, not just a cosmetic
++     * one — same reasoning as autoAcceptMerchantJob above.
++     */
++    protected function autoAcceptRiderJob(AssignJob $job, OrderStatus $status): void
++    {
++        $user = $job->user;
++        $order = $this->record;
++
++        $prev = AssignJob::whereIn('code', [OrderStatus::CUSTOMER_WAITING_RIDER_FOR_PICKUP])
++            ->where(['order_id' => $job->order_id, 'is_accepted' => false])
++            ->first();
++        if ($prev) {
++            $prev->is_accepted = true;
++            $prev->accepted_at = now();
++            $prev->accepted_by = $user->id;
++            $prev->save();
++
++            $prev->order_status->is_done = true;
++            $prev->order_status->done_at = now();
++            $prev->order_status->save();
++        }
++
++        $job->is_accepted = true;
++        $job->accepted_at = now();
++        $job->accepted_by = $user->id;
++        $job->save();
++
++        $status->is_done = true;
++        $status->done_at = now();
++        $status->updated_by = auth()->user()->id;
++        $status->save();
++
++        $customer_job = null;
++        $codes = [OrderStatus::CUSTOMER_DELIVERY_TO_WASH_OUTLET, OrderStatus::RIDER_READY_FOR_PICKUP];
++        foreach ($codes as $code) {
++            $new_status = OrderStatus::firstOrCreate([
++                'order_id' => $job->order_id,
++                'code' => $code,
++            ]);
++            $newJob = AssignJob::firstOrCreate([
++                'code' => $code,
++                'user_id' => ($code == OrderStatus::CUSTOMER_DELIVERY_TO_WASH_OUTLET) ? $order->user_id : $user->id,
++                'order_id' => $job->order_id,
++                'order_status_id' => $new_status->id,
++            ]);
++            if ($code == OrderStatus::CUSTOMER_DELIVERY_TO_WASH_OUTLET) {
++                $customer_job = $newJob;
++            }
++        }
++
++        AssignJob::where([
++            'code' => OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE,
++            'order_id' => $job->order_id,
++        ])->whereNotIn('id', [$job->id])
++        ->update(['is_queue' => false]);
++
++        if ($order->user) {
++            event(new \App\Events\CustomerReadyPickup($order->user, $customer_job));
++
++            try {
++                $onesignal = new \App\Services\OneSignalService();
++                $title = 'Rider is on the way';
++                $message = "Rider accepted your order {$order->id} and on the way to pick up your laundry item.";
++                $onesignal->notifyUser(
++                    $order->user,
++                    \App\Models\CustomerNotification::RIDER_ACCEPTED,
++                    $title,
++                    $message,
++                    $message,
++                    $order->id,
++                );
++            } catch (\Throwable $th) {
++                \Log::error('Failed to send customer rider-accepted notification', ['error' => $th->getMessage(), 'order_id' => $order->id]);
++            }
++        }
++
++        $merchantPendingJob = AssignJob::where([
++            'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
++            'order_id' => $job->order_id,
++        ])->first();
++        if ($merchantPendingJob && $merchantPendingJob->user) {
++            event(new \App\Events\MerchantRiderOnTheWay($merchantPendingJob->user, $merchantPendingJob));
++        }
++    }
++
+     /**
+      * [mutateFormDataBeforeSave description]
+      * @param  array  $data [description]
+@@ -412,10 +511,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                     $job->is_queue = true;
+                     $job->is_accepted = false;
+                     $job->save();
++                    $this->autoAcceptRiderJob($job, $status);
+ 
+-                    // notify the newly-assigned rider — this job needs
+-                    // their acceptance and previously nothing told them
+-                    // it existed.
++                    // notify the newly-assigned rider — auto-accepted
++                    // above, but they still need to know a job landed
++                    // on them.
+                     if ($job->user) {
+                         event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
+                     }
+@@ -427,17 +527,22 @@ protected function mutateFormDataBeforeSave(array $data): array
+ 
+                 if ($this->record->rider_pending) {
+                     if ($this->record->rider_pending->user_id == $data['rider_id']) {
+-                        // Re-assigning the SAME rider who already has a
+-                        // pending, not-yet-accepted job — previously this
+-                        // force-set is_accepted=true here, silently
+-                        // accepting on the rider's behalf without them
+-                        // ever tapping anything, which is exactly what
+-                        // made the job vanish from their Incoming tab.
+-                        // Just keep it visible as a genuine pending job —
+-                        // leave acceptance to the rider.
++                        // Re-confirming the SAME rider who already has a
++                        // pending job — commonly one the auto-assign cron
++                        // created before admin ever touched this order.
++                        // Auto-accept it now, per explicit follow-up
++                        // request: admin setting/confirming an assignment
++                        // should mean accepted, whether or not a rider was
++                        // already sitting on it beforehand.
+                         $this->record->rider_pending->is_queue = true;
+                         $this->record->rider_pending->updated_by = auth()->user()->id;
+                         $this->record->rider_pending->save();
++                        $pendingStatus = $this->record->rider_pending->order_status
++                            ?? OrderStatus::firstOrCreate([
++                                'order_id' => $this->record->id,
++                                'code' => OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE,
++                            ]);
++                        $this->autoAcceptRiderJob($this->record->rider_pending, $pendingStatus);
+                     } else {
+                         // Switching to a DIFFERENT rider while a pending
+                         // job exists for the old one — retire the stale
+@@ -467,10 +572,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                         $job->is_queue = true;
+                         $job->is_accepted = false;
+                         $job->save();
++                        $this->autoAcceptRiderJob($job, $status);
+ 
+-                        // notify the newly-assigned rider — this job
+-                        // needs their acceptance and previously nothing
+-                        // told them it existed.
++                        // notify the newly-assigned rider — auto-
++                        // accepted above, but they still need to know a
++                        // job landed on them.
+                         if ($job->user) {
+                             event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
+                         }
+@@ -488,17 +594,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                             'created_by' => auth()->user()->id,
+                         ]
+                     );
+-                    // Leave this as a genuine pending job (is_accepted =
+-                    // false, is_queue = true) — same as the auto-assign
+-                    // flow — rather than marking it pre-accepted. Marking
+-                    // it pre-accepted here used to skip the rider's own
+-                    // acceptance step entirely, which meant the
+-                    // "ready for pickup" follow-up job (normally created
+-                    // when the rider taps Accept in their own app) never
+-                    // got created either — so nothing ever showed up in
+-                    // their dashboard at all. The rider now sees this as
+-                    // a normal incoming job and accepts it themselves,
+-                    // which correctly cascades to the next step.
++                    // Auto-accepted below (autoAcceptRiderJob) — starts
++                    // as a normal pending job first, then immediately
++                    // cascaded through the full acceptance flow rather
++                    // than left for the rider to accept themselves, per
++                    // explicit follow-up request.
+                     $job = new AssignJob();
+                     $job->code = OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE;
+                     $job->user_id = $data['rider_id'];
+@@ -507,10 +607,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                     $job->is_queue = true;
+                     $job->is_accepted = false;
+                     $job->save();
++                    $this->autoAcceptRiderJob($job, $status);
+ 
+-                    // notify the newly-assigned rider — this job needs
+-                    // their acceptance and previously nothing told them
+-                    // it existed.
++                    // notify the newly-assigned rider — auto-accepted
++                    // above, but they still need to know a job landed
++                    // on them.
+                     if ($job->user) {
+                         event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
+                     }

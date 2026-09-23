@@ -1,0 +1,186 @@
+diff --git a/app/Filament/Resources/OrderResource.php b/app/Filament/Resources/OrderResource.php
+index 968f95b..77773f4 100644
+--- a/app/Filament/Resources/OrderResource.php
++++ b/app/Filament/Resources/OrderResource.php
+@@ -56,7 +56,9 @@ public static function table(Tables\Table $table): Tables\Table
+                 ->with([
+                     'booking',
+                     'rider.accepted_user',
++                    'rider_pending.user',
+                     'merchant.accepted_user',
++                    'merchant_pending.user.merchant',
+                     'commission_transactions.commission',
+                 ]))
+             ->columns([
+@@ -86,8 +88,22 @@ public static function table(Tables\Table $table): Tables\Table
+                     ->color(fn ($record) => !empty($record->booking?->items) ? 'info' : 'gray'),
+                 TextColumn::make('id') // must set valid column
+                     ->formatStateUsing(function ($record) {
+-                        $riderName = $record->rider->accepted_user->name ?? '-';
+-                        $merchantName = $record->merchant->accepted_user->merchant->company_name ?? '-';
++                        // rider/merchant (Order::rider()/merchant()) only match
++                        // is_accepted=true jobs — a job admin just manually
++                        // assigned starts as pending, same as the auto-assign
++                        // flow, so those relations are correctly null until the
++                        // rider/merchant actually taps Accept. Previously this
++                        // showed a bare "-" for a pending assignment, which
++                        // looked exactly like "nothing was assigned at all" —
++                        // falling back to rider_pending/merchant_pending (also
++                        // AssignJob, matching on code alone rather than
++                        // is_accepted too) shows who it's pending on instead.
++                        $riderName = $record->rider?->accepted_user?->name
++                            ?? ($record->rider_pending?->user?->name ? "{$record->rider_pending->user->name} (Pending)" : null)
++                            ?? '-';
++                        $merchantName = $record->merchant?->accepted_user?->merchant?->company_name
++                            ?? ($record->merchant_pending?->user?->merchant?->company_name ? "{$record->merchant_pending->user->merchant->company_name} (Pending)" : null)
++                            ?? '-';
+                         return "Rider: {$riderName}<br>Merchant: {$merchantName}";
+                     })
+                     ->html()
+diff --git a/app/Filament/Resources/OrderResource/Pages/EditOrder.php b/app/Filament/Resources/OrderResource/Pages/EditOrder.php
+index 6d5dadd..73e8f0f 100644
+--- a/app/Filament/Resources/OrderResource/Pages/EditOrder.php
++++ b/app/Filament/Resources/OrderResource/Pages/EditOrder.php
+@@ -306,6 +306,52 @@ protected function getRedirectUrl(): string
+         return $this->getResource()::getUrl('edit', ['record' => $this->record->id]);
+     }
+ 
++    /**
++     * Replicates Merchant/OrderController::acceptOrder()'s cascade —
++     * per explicit request, an admin-assigned merchant job now
++     * auto-accepts immediately rather than sitting as a pending job
++     * the merchant has to tap Accept on themselves (rider assignment
++     * deliberately keeps requiring rider acceptance — this is
++     * merchant-only). Must run the SAME cascade a real acceptance
++     * would — marking the current status done, creating the next
++     * MERCHANT_AWAITING_BAG_DELIVERY status + job, retiring other
++     * pending candidates — not just flip is_accepted, which is
++     * exactly the mistake noted in the comments throughout this
++     * method's rider/merchant branches above (marking a job
++     * pre-accepted without the cascade left nothing for the
++     * merchant's dashboard to act on next).
++     */
++    protected function autoAcceptMerchantJob(AssignJob $job, OrderStatus $status): void
++    {
++        $job->is_accepted = true;
++        $job->accepted_at = now();
++        $job->accepted_by = $job->user_id;
++        $job->save();
++
++        $status->is_done = true;
++        $status->done_at = now();
++        $status->updated_by = auth()->user()->id;
++        $status->save();
++
++        $newStatus = OrderStatus::firstOrCreate([
++            'order_id' => $job->order_id,
++            'code' => OrderStatus::MERCHANT_AWAITING_BAG_DELIVERY,
++        ]);
++
++        AssignJob::firstOrCreate([
++            'code' => OrderStatus::MERCHANT_AWAITING_BAG_DELIVERY,
++            'user_id' => $job->user_id,
++            'order_id' => $job->order_id,
++            'order_status_id' => $newStatus->id,
++        ]);
++
++        AssignJob::where([
++            'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
++            'order_id' => $job->order_id,
++        ])->whereNotIn('id', [$job->id])
++        ->update(['is_queue' => false]);
++    }
++
+     /**
+      * [mutateFormDataBeforeSave description]
+      * @param  array  $data [description]
+@@ -517,10 +563,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                     $job->is_queue = true;
+                     $job->is_accepted = false;
+                     $job->save();
++                    $this->autoAcceptMerchantJob($job, $status);
+ 
+-                    // notify the newly-assigned merchant — this job
+-                    // needs their acceptance and previously nothing told
+-                    // them it existed.
++                    // notify the newly-assigned merchant — auto-accepted
++                    // above, but they still need to know a job landed on
++                    // them.
+                     if ($job->user) {
+                         event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
+                     }
+@@ -532,17 +579,21 @@ protected function mutateFormDataBeforeSave(array $data): array
+                 if ($this->record->merchant_pending) {
+                     if ($this->record->merchant_pending->user_id == $data['merchant_id']) {
+                         // Re-assigning the SAME merchant who already has a
+-                        // pending, not-yet-accepted job — previously this
+-                        // force-set is_accepted=true here, silently
+-                        // accepting on the merchant's behalf without them
+-                        // ever tapping anything. That's exactly what made
+-                        // the job vanish from their Incoming tab (which
+-                        // filters on is_accepted=false). Just ensure it's
+-                        // still visible as a genuine pending job instead —
+-                        // leave acceptance to the merchant.
++                        // pending, not-yet-accepted job — auto-accept it
++                        // now, same reasoning as the fresh-assignment path
++                        // below (this "same merchant re-selected" case
++                        // used to just refresh is_queue/updated_by and
++                        // leave it pending, before merchant auto-accept
++                        // was requested).
+                         $this->record->merchant_pending->is_queue = true;
+                         $this->record->merchant_pending->updated_by = auth()->user()->id;
+                         $this->record->merchant_pending->save();
++                        $pendingStatus = $this->record->merchant_pending->order_status
++                            ?? OrderStatus::firstOrCreate([
++                                'order_id' => $this->record->id,
++                                'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
++                            ]);
++                        $this->autoAcceptMerchantJob($this->record->merchant_pending, $pendingStatus);
+                     } else {
+                         // Switching to a DIFFERENT merchant while a pending
+                         // job exists for the old one — the old job is now
+@@ -573,10 +624,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                         $job->is_queue = true;
+                         $job->is_accepted = false;
+                         $job->save();
++                        $this->autoAcceptMerchantJob($job, $status);
+ 
+-                        // notify the newly-assigned merchant — this job
+-                        // needs their acceptance and previously nothing
+-                        // told them it existed.
++                        // notify the newly-assigned merchant — auto-
++                        // accepted above, but they still need to know a
++                        // job landed on them.
+                         if ($job->user) {
+                             event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
+                         }
+@@ -594,9 +646,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                             'created_by' => auth()->user()->id,
+                         ]
+                     );
+-                    // See the matching rider block above for why this is
+-                    // left as a genuine pending job rather than marked
+-                    // pre-accepted.
++                    // Auto-accepted below (autoAcceptMerchantJob) —
++                    // starts as a normal pending job first, matching
++                    // the rider flow's own shape, then immediately
++                    // cascaded through acceptance rather than left for
++                    // the merchant to accept themselves.
+                     $job = new AssignJob();
+                     $job->code = OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE;
+                     $job->user_id = $data['merchant_id'];
+@@ -605,10 +659,11 @@ protected function mutateFormDataBeforeSave(array $data): array
+                     $job->is_queue = true;
+                     $job->is_accepted = false;
+                     $job->save();
++                    $this->autoAcceptMerchantJob($job, $status);
+ 
+-                    // notify the newly-assigned merchant — this job
+-                    // needs their acceptance and previously nothing told
+-                    // them it existed.
++                    // notify the newly-assigned merchant — auto-accepted
++                    // above, but they still need to know a job landed on
++                    // them.
+                     if ($job->user) {
+                         event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
+                     }

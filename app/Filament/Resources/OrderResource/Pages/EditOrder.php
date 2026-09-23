@@ -307,6 +307,157 @@ class EditOrder extends EditRecord
     }
 
     /**
+     * Replicates Merchant/OrderController::acceptOrder()'s cascade —
+     * per explicit request, an admin-set/confirmed merchant job now
+     * auto-accepts immediately rather than sitting as a pending job
+     * the merchant has to tap Accept on themselves. (Rider has its
+     * own equivalent — autoAcceptRiderJob below — added in a later
+     * follow-up that extended this same behavior to rider too.) Must
+     * run the SAME cascade a real acceptance would — marking the
+     * current status done, creating the next
+     * MERCHANT_AWAITING_BAG_DELIVERY status + job, retiring other
+     * pending candidates — not just flip is_accepted, which is
+     * exactly the mistake noted in the comments throughout this
+     * method's rider/merchant branches above (marking a job
+     * pre-accepted without the cascade left nothing for the
+     * merchant's dashboard to act on next).
+     */
+    protected function autoAcceptMerchantJob(AssignJob $job, OrderStatus $status): void
+    {
+        $job->is_accepted = true;
+        $job->accepted_at = now();
+        $job->accepted_by = $job->user_id;
+        $job->is_queue = false; // superseded by the next-step job created below — should no
+        // longer read as "the active job to act on" once accepted, same reasoning as
+        // the other-candidates update further down, just applied to this job too.
+        $job->save();
+
+        $status->is_done = true;
+        $status->done_at = now();
+        $status->updated_by = auth()->user()->id;
+        $status->save();
+
+        $newStatus = OrderStatus::firstOrCreate([
+            'order_id' => $job->order_id,
+            'code' => OrderStatus::MERCHANT_AWAITING_BAG_DELIVERY,
+        ]);
+
+        AssignJob::firstOrCreate([
+            'code' => OrderStatus::MERCHANT_AWAITING_BAG_DELIVERY,
+            'user_id' => $job->user_id,
+            'order_id' => $job->order_id,
+            'order_status_id' => $newStatus->id,
+        ]);
+
+        AssignJob::where([
+            'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
+            'order_id' => $job->order_id,
+        ])->whereNotIn('id', [$job->id])
+        ->update(['is_queue' => false]);
+    }
+
+    /**
+     * Replicates Rider/OrderController::acceptOrder()'s full cascade —
+     * per follow-up request, this now applies whenever admin sets
+     * (or re-confirms) a rider assignment, not just a fresh one,
+     * regardless of whether that rider got there via the auto-assign
+     * cron or admin's own selection. Rider's cascade is meaningfully
+     * bigger than merchant's: it also closes out any pending
+     * "customer waiting for rider" job, creates BOTH the next rider
+     * job (ready for pickup) AND a customer-facing job (delivery to
+     * wash outlet), notifies the customer their rider is on the way
+     * (both the Notification and the customer app's own in-app feed,
+     * same dual-write CustomerReadyPickup already does elsewhere),
+     * and gives the pending merchant a heads-up. Skipping any of
+     * these would leave a real gap downstream, not just a cosmetic
+     * one — same reasoning as autoAcceptMerchantJob above.
+     */
+    protected function autoAcceptRiderJob(AssignJob $job, OrderStatus $status): void
+    {
+        $user = $job->user;
+        $order = $this->record;
+
+        $prev = AssignJob::whereIn('code', [OrderStatus::CUSTOMER_WAITING_RIDER_FOR_PICKUP])
+            ->where(['order_id' => $job->order_id, 'is_accepted' => false])
+            ->first();
+        if ($prev) {
+            $prev->is_accepted = true;
+            $prev->accepted_at = now();
+            $prev->accepted_by = $user->id;
+            $prev->save();
+
+            $prev->order_status->is_done = true;
+            $prev->order_status->done_at = now();
+            $prev->order_status->save();
+        }
+
+        $job->is_accepted = true;
+        $job->accepted_at = now();
+        $job->accepted_by = $user->id;
+        $job->is_queue = false; // same reasoning as autoAcceptMerchantJob — superseded
+        // by the next-step job created below, should no longer read as "the active
+        // job to act on" once accepted.
+        $job->save();
+
+        $status->is_done = true;
+        $status->done_at = now();
+        $status->updated_by = auth()->user()->id;
+        $status->save();
+
+        $customer_job = null;
+        $codes = [OrderStatus::CUSTOMER_DELIVERY_TO_WASH_OUTLET, OrderStatus::RIDER_READY_FOR_PICKUP];
+        foreach ($codes as $code) {
+            $new_status = OrderStatus::firstOrCreate([
+                'order_id' => $job->order_id,
+                'code' => $code,
+            ]);
+            $newJob = AssignJob::firstOrCreate([
+                'code' => $code,
+                'user_id' => ($code == OrderStatus::CUSTOMER_DELIVERY_TO_WASH_OUTLET) ? $order->user_id : $user->id,
+                'order_id' => $job->order_id,
+                'order_status_id' => $new_status->id,
+            ]);
+            if ($code == OrderStatus::CUSTOMER_DELIVERY_TO_WASH_OUTLET) {
+                $customer_job = $newJob;
+            }
+        }
+
+        AssignJob::where([
+            'code' => OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE,
+            'order_id' => $job->order_id,
+        ])->whereNotIn('id', [$job->id])
+        ->update(['is_queue' => false]);
+
+        if ($order->user) {
+            event(new \App\Events\CustomerReadyPickup($order->user, $customer_job));
+
+            try {
+                $onesignal = new \App\Services\OneSignalService();
+                $title = 'Rider is on the way';
+                $message = "Rider accepted your order {$order->id} and on the way to pick up your laundry item.";
+                $onesignal->notifyUser(
+                    $order->user,
+                    \App\Models\CustomerNotification::RIDER_ACCEPTED,
+                    $title,
+                    $message,
+                    $message,
+                    $order->id,
+                );
+            } catch (\Throwable $th) {
+                \Log::error('Failed to send customer rider-accepted notification', ['error' => $th->getMessage(), 'order_id' => $order->id]);
+            }
+        }
+
+        $merchantPendingJob = AssignJob::where([
+            'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
+            'order_id' => $job->order_id,
+        ])->first();
+        if ($merchantPendingJob && $merchantPendingJob->user) {
+            event(new \App\Events\MerchantRiderOnTheWay($merchantPendingJob->user, $merchantPendingJob));
+        }
+    }
+
+    /**
      * [mutateFormDataBeforeSave description]
      * @param  array  $data [description]
      * @return [type]       [description]
@@ -366,10 +517,11 @@ class EditOrder extends EditRecord
                     $job->is_queue = true;
                     $job->is_accepted = false;
                     $job->save();
+                    $this->autoAcceptRiderJob($job, $status);
 
-                    // notify the newly-assigned rider — this job needs
-                    // their acceptance and previously nothing told them
-                    // it existed.
+                    // notify the newly-assigned rider — auto-accepted
+                    // above, but they still need to know a job landed
+                    // on them.
                     if ($job->user) {
                         event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
                     }
@@ -381,17 +533,22 @@ class EditOrder extends EditRecord
 
                 if ($this->record->rider_pending) {
                     if ($this->record->rider_pending->user_id == $data['rider_id']) {
-                        // Re-assigning the SAME rider who already has a
-                        // pending, not-yet-accepted job — previously this
-                        // force-set is_accepted=true here, silently
-                        // accepting on the rider's behalf without them
-                        // ever tapping anything, which is exactly what
-                        // made the job vanish from their Incoming tab.
-                        // Just keep it visible as a genuine pending job —
-                        // leave acceptance to the rider.
+                        // Re-confirming the SAME rider who already has a
+                        // pending job — commonly one the auto-assign cron
+                        // created before admin ever touched this order.
+                        // Auto-accept it now, per explicit follow-up
+                        // request: admin setting/confirming an assignment
+                        // should mean accepted, whether or not a rider was
+                        // already sitting on it beforehand.
                         $this->record->rider_pending->is_queue = true;
                         $this->record->rider_pending->updated_by = auth()->user()->id;
                         $this->record->rider_pending->save();
+                        $pendingStatus = $this->record->rider_pending->order_status
+                            ?? OrderStatus::firstOrCreate([
+                                'order_id' => $this->record->id,
+                                'code' => OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE,
+                            ]);
+                        $this->autoAcceptRiderJob($this->record->rider_pending, $pendingStatus);
                     } else {
                         // Switching to a DIFFERENT rider while a pending
                         // job exists for the old one — retire the stale
@@ -421,10 +578,11 @@ class EditOrder extends EditRecord
                         $job->is_queue = true;
                         $job->is_accepted = false;
                         $job->save();
+                        $this->autoAcceptRiderJob($job, $status);
 
-                        // notify the newly-assigned rider — this job
-                        // needs their acceptance and previously nothing
-                        // told them it existed.
+                        // notify the newly-assigned rider — auto-
+                        // accepted above, but they still need to know a
+                        // job landed on them.
                         if ($job->user) {
                             event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
                         }
@@ -442,17 +600,11 @@ class EditOrder extends EditRecord
                             'created_by' => auth()->user()->id,
                         ]
                     );
-                    // Leave this as a genuine pending job (is_accepted =
-                    // false, is_queue = true) — same as the auto-assign
-                    // flow — rather than marking it pre-accepted. Marking
-                    // it pre-accepted here used to skip the rider's own
-                    // acceptance step entirely, which meant the
-                    // "ready for pickup" follow-up job (normally created
-                    // when the rider taps Accept in their own app) never
-                    // got created either — so nothing ever showed up in
-                    // their dashboard at all. The rider now sees this as
-                    // a normal incoming job and accepts it themselves,
-                    // which correctly cascades to the next step.
+                    // Auto-accepted below (autoAcceptRiderJob) — starts
+                    // as a normal pending job first, then immediately
+                    // cascaded through the full acceptance flow rather
+                    // than left for the rider to accept themselves, per
+                    // explicit follow-up request.
                     $job = new AssignJob();
                     $job->code = OrderStatus::RIDER_PENDING_FOR_ACCEPTANCE;
                     $job->user_id = $data['rider_id'];
@@ -461,10 +613,11 @@ class EditOrder extends EditRecord
                     $job->is_queue = true;
                     $job->is_accepted = false;
                     $job->save();
+                    $this->autoAcceptRiderJob($job, $status);
 
-                    // notify the newly-assigned rider — this job needs
-                    // their acceptance and previously nothing told them
-                    // it existed.
+                    // notify the newly-assigned rider — auto-accepted
+                    // above, but they still need to know a job landed
+                    // on them.
                     if ($job->user) {
                         event(new \App\Events\RiderAdminAssignOrder($job->user, $job));
                     }
@@ -517,10 +670,11 @@ class EditOrder extends EditRecord
                     $job->is_queue = true;
                     $job->is_accepted = false;
                     $job->save();
+                    $this->autoAcceptMerchantJob($job, $status);
 
-                    // notify the newly-assigned merchant — this job
-                    // needs their acceptance and previously nothing told
-                    // them it existed.
+                    // notify the newly-assigned merchant — auto-accepted
+                    // above, but they still need to know a job landed on
+                    // them.
                     if ($job->user) {
                         event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
                     }
@@ -532,17 +686,21 @@ class EditOrder extends EditRecord
                 if ($this->record->merchant_pending) {
                     if ($this->record->merchant_pending->user_id == $data['merchant_id']) {
                         // Re-assigning the SAME merchant who already has a
-                        // pending, not-yet-accepted job — previously this
-                        // force-set is_accepted=true here, silently
-                        // accepting on the merchant's behalf without them
-                        // ever tapping anything. That's exactly what made
-                        // the job vanish from their Incoming tab (which
-                        // filters on is_accepted=false). Just ensure it's
-                        // still visible as a genuine pending job instead —
-                        // leave acceptance to the merchant.
+                        // pending, not-yet-accepted job — auto-accept it
+                        // now, same reasoning as the fresh-assignment path
+                        // below (this "same merchant re-selected" case
+                        // used to just refresh is_queue/updated_by and
+                        // leave it pending, before merchant auto-accept
+                        // was requested).
                         $this->record->merchant_pending->is_queue = true;
                         $this->record->merchant_pending->updated_by = auth()->user()->id;
                         $this->record->merchant_pending->save();
+                        $pendingStatus = $this->record->merchant_pending->order_status
+                            ?? OrderStatus::firstOrCreate([
+                                'order_id' => $this->record->id,
+                                'code' => OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE,
+                            ]);
+                        $this->autoAcceptMerchantJob($this->record->merchant_pending, $pendingStatus);
                     } else {
                         // Switching to a DIFFERENT merchant while a pending
                         // job exists for the old one — the old job is now
@@ -573,10 +731,11 @@ class EditOrder extends EditRecord
                         $job->is_queue = true;
                         $job->is_accepted = false;
                         $job->save();
+                        $this->autoAcceptMerchantJob($job, $status);
 
-                        // notify the newly-assigned merchant — this job
-                        // needs their acceptance and previously nothing
-                        // told them it existed.
+                        // notify the newly-assigned merchant — auto-
+                        // accepted above, but they still need to know a
+                        // job landed on them.
                         if ($job->user) {
                             event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
                         }
@@ -594,9 +753,11 @@ class EditOrder extends EditRecord
                             'created_by' => auth()->user()->id,
                         ]
                     );
-                    // See the matching rider block above for why this is
-                    // left as a genuine pending job rather than marked
-                    // pre-accepted.
+                    // Auto-accepted below (autoAcceptMerchantJob) —
+                    // starts as a normal pending job first, matching
+                    // the rider flow's own shape, then immediately
+                    // cascaded through acceptance rather than left for
+                    // the merchant to accept themselves.
                     $job = new AssignJob();
                     $job->code = OrderStatus::MERCHANT_PENDING_FOR_ACCEPTANCE;
                     $job->user_id = $data['merchant_id'];
@@ -605,10 +766,11 @@ class EditOrder extends EditRecord
                     $job->is_queue = true;
                     $job->is_accepted = false;
                     $job->save();
+                    $this->autoAcceptMerchantJob($job, $status);
 
-                    // notify the newly-assigned merchant — this job
-                    // needs their acceptance and previously nothing told
-                    // them it existed.
+                    // notify the newly-assigned merchant — auto-accepted
+                    // above, but they still need to know a job landed on
+                    // them.
                     if ($job->user) {
                         event(new \App\Events\MerchantAdminAssignOrder($job->user, $job));
                     }
@@ -1528,6 +1690,18 @@ class EditOrder extends EditRecord
                                         ->label('Rider')                                                                                 
                                         ->placeholder('Select Rider')
                                         ->searchable()
+                                        // rider_id isn't a real column on Order (assignment is
+                                        // tracked via AssignJob — see mutateFormDataBeforeSave
+                                        // below), so Filament's default hydration never had
+                                        // anything to populate this from — the field always
+                                        // opened blank even when a rider was already assigned,
+                                        // which looked exactly like "admin can't assign a
+                                        // rider" from the admin's side, even though the actual
+                                        // save logic was working correctly underneath. Prefer
+                                        // the accepted job; fall back to a pending one.
+                                        ->afterStateHydrated(function ($component, $record) {
+                                            $component->state($record?->rider?->user_id ?? $record?->rider_pending?->user_id);
+                                        })
                                         ->options(function () {
                                             return \App\Models\User::role('rider')
                                                 ->orderBy('name', 'asc')
@@ -1545,6 +1719,10 @@ class EditOrder extends EditRecord
                                         ->label('Merchant')                                            
                                         ->placeholder('Select Merchant')
                                         ->searchable()
+                                        // Same reasoning as rider_id above.
+                                        ->afterStateHydrated(function ($component, $record) {
+                                            $component->state($record?->merchant?->user_id ?? $record?->merchant_pending?->user_id);
+                                        })
                                         ->preload(function () {
                                             return \App\Models\User::role('merchant')
                                                 ->join('merchants', 'merchants.user_id', '=', 'users.id')

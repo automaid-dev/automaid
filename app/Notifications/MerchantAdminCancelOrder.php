@@ -58,8 +58,8 @@ class MerchantAdminCancelOrder extends Notification
 
             // send push notification            
             $data = [
-                'title' => '❌ Order Cancelled',
-                'message' => '❌ The order has been cancelled. No worries—another delivery opportunity is coming your way! 🛵'
+                'title' => 'Order Cancelled',
+                'message' => "Order #{$this->order->id} has been cancelled.",
             ];
             $onesignal = new \App\Services\OneSignalService();
             $extra = ['order_id' => $this->order->id];

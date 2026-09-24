@@ -1,0 +1,30 @@
+diff --git a/app/Notifications/MerchantAdminCancelOrder.php b/app/Notifications/MerchantAdminCancelOrder.php
+index 30f54a7..7bca5f0 100644
+--- a/app/Notifications/MerchantAdminCancelOrder.php
++++ b/app/Notifications/MerchantAdminCancelOrder.php
+@@ -58,8 +58,8 @@ public function toArray(object $notifiable): array
+ 
+             // send push notification            
+             $data = [
+-                'title' => '❌ Order Cancelled',
+-                'message' => '❌ The order has been cancelled. No worries—another delivery opportunity is coming your way! 🛵'
++                'title' => 'Order Cancelled',
++                'message' => "Order #{$this->order->id} has been cancelled.",
+             ];
+             $onesignal = new \App\Services\OneSignalService();
+             $extra = ['order_id' => $this->order->id];
+diff --git a/app/Notifications/RiderAdminCancelOrder.php b/app/Notifications/RiderAdminCancelOrder.php
+index 90f5f94..f26fa0d 100644
+--- a/app/Notifications/RiderAdminCancelOrder.php
++++ b/app/Notifications/RiderAdminCancelOrder.php
+@@ -58,8 +58,8 @@ public function toArray(object $notifiable): array
+ 
+             // send push notification            
+             $data = [
+-                'title' => '❌ Order Cancelled',
+-                'message' => '❌ The order has been cancelled. No worries—another delivery opportunity is coming your way! 🛵'
++                'title' => 'Order Cancelled',
++                'message' => "Order #{$this->order->id} has been cancelled.",
+             ];
+             $onesignal = new \App\Services\OneSignalService();
+             $extra = ['order_id' => $this->order->id];

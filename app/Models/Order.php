@@ -495,5 +495,128 @@ class Order extends Model implements Auditable
         return $this->hasOne('App\Models\InsuranceUser', 'order_id', 'id');
     }
 
-    
+    /**
+     * Human-readable wash type for a booking: "Wash & Fold" or the
+     * service category name ("Dry Cleaning"). Same convention used
+     * across BookingController / admin OrderResource — a booking with
+     * a service_category_id (or dry-clean items) is dry cleaning,
+     * without one it's the original Wash & Fold flow. Null for
+     * non-booking orders (bag purchase, subscription).
+     */
+    public function serviceTypeLabel(): ?string
+    {
+        if ($this->order_type !== self::BOOKING) {
+            return null;
+        }
+
+        $booking = $this->booking;
+        if (!$booking) {
+            return 'Wash & Fold';
+        }
+
+        if ($booking->service_category_id || !empty($booking->items)) {
+            // Queried directly rather than via the relation property so
+            // it doesn't get attached to (and serialized with) the booking.
+            $name = $booking->service_category_id
+                ? $booking->service_category()->value('name')
+                : null;
+            return $name ?: \App\Models\ServiceCategory::DRY_CLEANING;
+        }
+
+        return 'Wash & Fold';
+    }
+
+    /**
+     * Customer pickup address as one line — same field order as the
+     * admin EditOrder "Location" placeholder.
+     */
+    public function customerAddressText(): ?string
+    {
+        $location = $this->booking?->pickup_location;
+        if (!$location) {
+            return null;
+        }
+
+        $text = implode(', ', array_filter([
+            $location->unit_no,
+            $location->floor,
+            $location->block,
+            $location->address_line_1,
+            $location->address_line_2,
+            $location->address_line_3,
+            trim(($location->postcode ?? '') . ' ' . ($location->city ?? '')),
+            $location->state?->name,
+        ]));
+
+        return $text !== '' ? $text : null;
+    }
+
+    /**
+     * The accepted merchant's name + address. Prefers the merchant's
+     * outlet address, falling back to the address on the merchant
+     * profile itself. Uses the accepted merchant, else the pending one;
+     * null if no merchant has been assigned yet.
+     *
+     * @return array{name: ?string, address: ?string}|null
+     */
+    public function merchantAddressInfo(): ?array
+    {
+        // Fresh query instead of $this->merchant so the merchant's
+        // user/profile records are never attached to this Order and
+        // leaked into the customer endpoint's JSON.
+        // Falls back to the pending (assigned, not yet accepted) merchant
+        // job so the address still shows before the merchant taps Accept.
+        $with = ['user.merchant.outlet.state', 'user.merchant.state'];
+        $job = $this->merchant()->with($with)->first()
+            ?? $this->merchant_pending()->with($with)->latest('id')->first();
+        $merchantUser = $job?->user;
+        $profile = $merchantUser?->merchant;
+        if (!$merchantUser) {
+            return null;
+        }
+
+        $format = function ($source) {
+            if (!$source) {
+                return null;
+            }
+            $text = implode(', ', array_filter([
+                $source->unit_no ?? null,
+                $source->floor ?? null,
+                $source->block ?? null,
+                $source->address_line_1 ?? null,
+                $source->address_line_2 ?? null,
+                $source->address_line_3 ?? null,
+                trim(($source->postcode ?? '') . ' ' . ($source->city ?? '')),
+                $source->state?->name,
+            ]));
+            return $text !== '' ? $text : null;
+        };
+
+        $outlet = $profile?->outlet;
+        $address = $format($outlet) ?? $format($profile);
+
+        return [
+            'name' => $outlet?->name ?: ($profile?->company_name ?: $merchantUser->name),
+            'address' => $address,
+        ];
+    }
+
+    /**
+     * Attach the display-only fields the apps show on order detail and
+     * receipt screens (service_type, customer_address, merchant_name,
+     * merchant_address). Only sets plain strings — never exposes the
+     * merchant's user/profile records themselves (bank details, IC
+     * documents), which matters for the customer-facing endpoint.
+     */
+    public function withDisplayDetails(): self
+    {
+        $merchant = $this->merchantAddressInfo();
+
+        $this->setAttribute('service_type', $this->serviceTypeLabel());
+        $this->setAttribute('customer_address', $this->customerAddressText());
+        $this->setAttribute('merchant_name', $merchant['name'] ?? null);
+        $this->setAttribute('merchant_address', $merchant['address'] ?? null);
+
+        return $this;
+    }
 }

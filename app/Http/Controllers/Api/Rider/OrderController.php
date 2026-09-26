@@ -310,9 +310,15 @@ class OrderController extends Controller
 
                 // return data order details
                 $order->load([
-                    'booking.pickup_location', 
-                    'rider_order_statuses.status', 
+                    'booking.pickup_location.state',
+                    'rider_order_statuses.status',
                     'merchant.user.merchant.outlet',
+                    // Falls back to the pending (not-yet-accepted) merchant
+                    // job so the merchant's outlet address still shows on
+                    // this screen before that merchant has tapped Accept —
+                    // same is_accepted=true vs code-only distinction used
+                    // for the admin "Assigned To" column.
+                    'merchant_pending.user.merchant.outlet',
                     'order_addons.addon',
                     'delivered',
                     'qrcode_users.qrcode',
@@ -326,6 +332,7 @@ class OrderController extends Controller
                         });
                     },
                 ]);
+                $order->withDisplayDetails();
                 $data['order'] = $order;
                 return response()->json([
                     'data' => $data,
@@ -348,13 +355,15 @@ class OrderController extends Controller
 
                 // return data order details
                 $assign->load([
-                    'user.rider', 
-                    'order.booking.pickup_location', 
-                    'order.rider_order_statuses.status', 
+                    'user.rider',
+                    'order.booking.pickup_location.state',
+                    'order.rider_order_statuses.status',
                     'order.merchant.user.merchant.outlet',
-                    'order.order_addons.addon', 
-                    'order.qrcode_users.qrcode', 
+                    'order.merchant_pending.user.merchant.outlet',
+                    'order.order_addons.addon',
+                    'order.qrcode_users.qrcode',
                 ]);
+                $assign->order?->withDisplayDetails();
                 $data['assign_job'] = $assign;
                 return response()->json([
                     'data' => $data,

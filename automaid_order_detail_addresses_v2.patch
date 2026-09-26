@@ -1,0 +1,205 @@
+diff --git a/app/Http/Controllers/Api/Customer/OrderController.php b/app/Http/Controllers/Api/Customer/OrderController.php
+index 0940a28..3ee2c17 100644
+--- a/app/Http/Controllers/Api/Customer/OrderController.php
++++ b/app/Http/Controllers/Api/Customer/OrderController.php
+@@ -64,18 +64,18 @@ public function orderDetail(Request $request)
+                 // the push notification being the only place refund
+                 // status was ever visible to the customer.
+                 'payment',
+-                // Added so the customer's order detail + receipt screens
+-                // can show the pickup address and the assigned merchant's
+-                // outlet address after the grand total. booking.pickup_location
+-                // is the customer's saved address for this order; merchant
+-                // falls back to merchant_pending (same is_accepted=true vs
+-                // code-only distinction used everywhere else in this
+-                // codebase) so the address still shows while a rider/merchant
+-                // has been assigned but not yet tapped Accept.
+-                'booking.pickup_location',
+-                'merchant.user.merchant.outlet',
+-                'merchant_pending.user.merchant.outlet',
++                // Customer's own pickup address (shown after Grand total).
++                'booking.pickup_location.state',
++                // NOTE: merchant.user.merchant.outlet is deliberately NOT
++                // eager-loaded here — that serializes the merchant's full
++                // profile (bank_no, IC/SSM document URLs) into the
++                // customer's JSON. withDisplayDetails() below adds only
++                // merchant_name / merchant_address as plain strings
++                // (accepted merchant, falling back to the pending one).
+             ]);
++            // Adds service_type ("Wash & Fold" / "Dry Cleaning"),
++            // customer_address, merchant_name, merchant_address.
++            $order->withDisplayDetails();
+             $data['order'] = $order;
+             return response()->json([
+                 'data' => $data,
+diff --git a/app/Http/Controllers/Api/Rider/OrderController.php b/app/Http/Controllers/Api/Rider/OrderController.php
+index 92b01ed..5e6a84b 100644
+--- a/app/Http/Controllers/Api/Rider/OrderController.php
++++ b/app/Http/Controllers/Api/Rider/OrderController.php
+@@ -310,7 +310,7 @@ public function orderDetail(Request $request)
+ 
+                 // return data order details
+                 $order->load([
+-                    'booking.pickup_location',
++                    'booking.pickup_location.state',
+                     'rider_order_statuses.status',
+                     'merchant.user.merchant.outlet',
+                     // Falls back to the pending (not-yet-accepted) merchant
+@@ -332,6 +332,7 @@ public function orderDetail(Request $request)
+                         });
+                     },
+                 ]);
++                $order->withDisplayDetails();
+                 $data['order'] = $order;
+                 return response()->json([
+                     'data' => $data,
+@@ -355,13 +356,14 @@ public function orderDetail(Request $request)
+                 // return data order details
+                 $assign->load([
+                     'user.rider',
+-                    'order.booking.pickup_location',
++                    'order.booking.pickup_location.state',
+                     'order.rider_order_statuses.status',
+                     'order.merchant.user.merchant.outlet',
+                     'order.merchant_pending.user.merchant.outlet',
+                     'order.order_addons.addon',
+                     'order.qrcode_users.qrcode',
+                 ]);
++                $assign->order?->withDisplayDetails();
+                 $data['assign_job'] = $assign;
+                 return response()->json([
+                     'data' => $data,
+diff --git a/app/Models/Order.php b/app/Models/Order.php
+index 11bdd96..e27b5db 100644
+--- a/app/Models/Order.php
++++ b/app/Models/Order.php
+@@ -495,5 +495,128 @@ public function insurance()
+         return $this->hasOne('App\Models\InsuranceUser', 'order_id', 'id');
+     }
+ 
+-    
++    /**
++     * Human-readable wash type for a booking: "Wash & Fold" or the
++     * service category name ("Dry Cleaning"). Same convention used
++     * across BookingController / admin OrderResource — a booking with
++     * a service_category_id (or dry-clean items) is dry cleaning,
++     * without one it's the original Wash & Fold flow. Null for
++     * non-booking orders (bag purchase, subscription).
++     */
++    public function serviceTypeLabel(): ?string
++    {
++        if ($this->order_type !== self::BOOKING) {
++            return null;
++        }
++
++        $booking = $this->booking;
++        if (!$booking) {
++            return 'Wash & Fold';
++        }
++
++        if ($booking->service_category_id || !empty($booking->items)) {
++            // Queried directly rather than via the relation property so
++            // it doesn't get attached to (and serialized with) the booking.
++            $name = $booking->service_category_id
++                ? $booking->service_category()->value('name')
++                : null;
++            return $name ?: \App\Models\ServiceCategory::DRY_CLEANING;
++        }
++
++        return 'Wash & Fold';
++    }
++
++    /**
++     * Customer pickup address as one line — same field order as the
++     * admin EditOrder "Location" placeholder.
++     */
++    public function customerAddressText(): ?string
++    {
++        $location = $this->booking?->pickup_location;
++        if (!$location) {
++            return null;
++        }
++
++        $text = implode(', ', array_filter([
++            $location->unit_no,
++            $location->floor,
++            $location->block,
++            $location->address_line_1,
++            $location->address_line_2,
++            $location->address_line_3,
++            trim(($location->postcode ?? '') . ' ' . ($location->city ?? '')),
++            $location->state?->name,
++        ]));
++
++        return $text !== '' ? $text : null;
++    }
++
++    /**
++     * The accepted merchant's name + address. Prefers the merchant's
++     * outlet address, falling back to the address on the merchant
++     * profile itself. Uses the accepted merchant, else the pending one;
++     * null if no merchant has been assigned yet.
++     *
++     * @return array{name: ?string, address: ?string}|null
++     */
++    public function merchantAddressInfo(): ?array
++    {
++        // Fresh query instead of $this->merchant so the merchant's
++        // user/profile records are never attached to this Order and
++        // leaked into the customer endpoint's JSON.
++        // Falls back to the pending (assigned, not yet accepted) merchant
++        // job so the address still shows before the merchant taps Accept.
++        $with = ['user.merchant.outlet.state', 'user.merchant.state'];
++        $job = $this->merchant()->with($with)->first()
++            ?? $this->merchant_pending()->with($with)->latest('id')->first();
++        $merchantUser = $job?->user;
++        $profile = $merchantUser?->merchant;
++        if (!$merchantUser) {
++            return null;
++        }
++
++        $format = function ($source) {
++            if (!$source) {
++                return null;
++            }
++            $text = implode(', ', array_filter([
++                $source->unit_no ?? null,
++                $source->floor ?? null,
++                $source->block ?? null,
++                $source->address_line_1 ?? null,
++                $source->address_line_2 ?? null,
++                $source->address_line_3 ?? null,
++                trim(($source->postcode ?? '') . ' ' . ($source->city ?? '')),
++                $source->state?->name,
++            ]));
++            return $text !== '' ? $text : null;
++        };
++
++        $outlet = $profile?->outlet;
++        $address = $format($outlet) ?? $format($profile);
++
++        return [
++            'name' => $outlet?->name ?: ($profile?->company_name ?: $merchantUser->name),
++            'address' => $address,
++        ];
++    }
++
++    /**
++     * Attach the display-only fields the apps show on order detail and
++     * receipt screens (service_type, customer_address, merchant_name,
++     * merchant_address). Only sets plain strings — never exposes the
++     * merchant's user/profile records themselves (bank details, IC
++     * documents), which matters for the customer-facing endpoint.
++     */
++    public function withDisplayDetails(): self
++    {
++        $merchant = $this->merchantAddressInfo();
++
++        $this->setAttribute('service_type', $this->serviceTypeLabel());
++        $this->setAttribute('customer_address', $this->customerAddressText());
++        $this->setAttribute('merchant_name', $merchant['name'] ?? null);
++        $this->setAttribute('merchant_address', $merchant['address'] ?? null);
++
++        return $this;
++    }
+ }

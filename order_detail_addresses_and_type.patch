@@ -1,0 +1,74 @@
+diff --git a/app/Http/Controllers/Api/Customer/OrderController.php b/app/Http/Controllers/Api/Customer/OrderController.php
+index 4055636..0940a28 100644
+--- a/app/Http/Controllers/Api/Customer/OrderController.php
++++ b/app/Http/Controllers/Api/Customer/OrderController.php
+@@ -52,8 +52,8 @@ public function orderDetail(Request $request)
+ 
+             // return data order details
+             $order->load([
+-                'booking.order.order_addons.addon', 
+-                'delivered', 
++                'booking.order.order_addons.addon',
++                'delivered',
+                 'customer_order_statuses',
+                 'qrcode_users.qrcode',
+                 'step_photos',
+@@ -64,6 +64,17 @@ public function orderDetail(Request $request)
+                 // the push notification being the only place refund
+                 // status was ever visible to the customer.
+                 'payment',
++                // Added so the customer's order detail + receipt screens
++                // can show the pickup address and the assigned merchant's
++                // outlet address after the grand total. booking.pickup_location
++                // is the customer's saved address for this order; merchant
++                // falls back to merchant_pending (same is_accepted=true vs
++                // code-only distinction used everywhere else in this
++                // codebase) so the address still shows while a rider/merchant
++                // has been assigned but not yet tapped Accept.
++                'booking.pickup_location',
++                'merchant.user.merchant.outlet',
++                'merchant_pending.user.merchant.outlet',
+             ]);
+             $data['order'] = $order;
+             return response()->json([
+diff --git a/app/Http/Controllers/Api/Rider/OrderController.php b/app/Http/Controllers/Api/Rider/OrderController.php
+index 9c9a990..92b01ed 100644
+--- a/app/Http/Controllers/Api/Rider/OrderController.php
++++ b/app/Http/Controllers/Api/Rider/OrderController.php
+@@ -310,9 +310,15 @@ public function orderDetail(Request $request)
+ 
+                 // return data order details
+                 $order->load([
+-                    'booking.pickup_location', 
+-                    'rider_order_statuses.status', 
++                    'booking.pickup_location',
++                    'rider_order_statuses.status',
+                     'merchant.user.merchant.outlet',
++                    // Falls back to the pending (not-yet-accepted) merchant
++                    // job so the merchant's outlet address still shows on
++                    // this screen before that merchant has tapped Accept —
++                    // same is_accepted=true vs code-only distinction used
++                    // for the admin "Assigned To" column.
++                    'merchant_pending.user.merchant.outlet',
+                     'order_addons.addon',
+                     'delivered',
+                     'qrcode_users.qrcode',
+@@ -348,12 +354,13 @@ public function orderDetail(Request $request)
+ 
+                 // return data order details
+                 $assign->load([
+-                    'user.rider', 
+-                    'order.booking.pickup_location', 
+-                    'order.rider_order_statuses.status', 
++                    'user.rider',
++                    'order.booking.pickup_location',
++                    'order.rider_order_statuses.status',
+                     'order.merchant.user.merchant.outlet',
+-                    'order.order_addons.addon', 
+-                    'order.qrcode_users.qrcode', 
++                    'order.merchant_pending.user.merchant.outlet',
++                    'order.order_addons.addon',
++                    'order.qrcode_users.qrcode',
+                 ]);
+                 $data['assign_job'] = $assign;
+                 return response()->json([

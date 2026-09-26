@@ -52,8 +52,8 @@ class OrderController extends Controller
 
             // return data order details
             $order->load([
-                'booking.order.order_addons.addon', 
-                'delivered', 
+                'booking.order.order_addons.addon',
+                'delivered',
                 'customer_order_statuses',
                 'qrcode_users.qrcode',
                 'step_photos',
@@ -64,7 +64,18 @@ class OrderController extends Controller
                 // the push notification being the only place refund
                 // status was ever visible to the customer.
                 'payment',
+                // Customer's own pickup address (shown after Grand total).
+                'booking.pickup_location.state',
+                // NOTE: merchant.user.merchant.outlet is deliberately NOT
+                // eager-loaded here — that serializes the merchant's full
+                // profile (bank_no, IC/SSM document URLs) into the
+                // customer's JSON. withDisplayDetails() below adds only
+                // merchant_name / merchant_address as plain strings
+                // (accepted merchant, falling back to the pending one).
             ]);
+            // Adds service_type ("Wash & Fold" / "Dry Cleaning"),
+            // customer_address, merchant_name, merchant_address.
+            $order->withDisplayDetails();
             $data['order'] = $order;
             return response()->json([
                 'data' => $data,

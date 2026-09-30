@@ -1739,6 +1739,41 @@ class EditOrder extends EditRecord
                                         }),
                                 ]),
 
+                            // One-tap WhatsApp (wa.me click-to-chat) to each party on
+                            // this order, pre-filled with the order reference. Admin
+                            // sees these regardless of order stage.
+                            Section::make('Contact via WhatsApp')
+                                ->schema([
+                                    Placeholder::make('whatsapp_contacts')
+                                        ->label(false)
+                                        ->content(function () {
+                                            $record = $this->record;
+                                            $ref = 'AutoMaid order #' . $record->id . ($record->series_no ? ' (' . $record->series_no . ')' : '');
+                                            $riderUser = ($record->rider ?? $record->rider_pending)?->user;
+                                            $merchantUser = ($record->merchant ?? $record->merchant_pending)?->user;
+                                            $people = [
+                                                ['Customer', $record->user],
+                                                ['Rider', $riderUser],
+                                                ['Merchant', $merchantUser],
+                                            ];
+
+                                            $html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+                                            foreach ($people as [$role, $person]) {
+                                                $link = \App\Support\WhatsApp::link(
+                                                    \App\Support\WhatsApp::numberOf($person),
+                                                    "Hi {$person?->name}, this is AutoMaid Support regarding {$ref}."
+                                                );
+                                                $html .= '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+                                                    . '<span><span style="color:#6b7280;font-size:12px;">' . e($role) . '</span><br>' . e($person?->name ?? '—') . '</span>'
+                                                    . ($link
+                                                        ? '<a href="' . e($link) . '" target="_blank" rel="noopener" style="background:#25D366;color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;white-space:nowrap;">WhatsApp</a>'
+                                                        : '<span style="color:#9ca3af;font-size:12px;">' . ($person ? 'No valid number' : 'Not assigned') . '</span>')
+                                                    . '</div>';
+                                            }
+                                            return new \Illuminate\Support\HtmlString($html . '</div>');
+                                        }),
+                                ]),
+
                             Section::make('Update Status')
                                 ->schema([
                                     Select::make('admin_status')

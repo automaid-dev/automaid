@@ -424,8 +424,9 @@ class EditSetting extends EditRecord
                                                             ->placeholder('e.g., 03 3456 7890')
                                                             ->required(),
                                                         TextInput::make('whatapp_no')
-                                                            ->label('WhatApp Number')
+                                                            ->label('WhatsApp Number')
                                                             ->placeholder('e.g., 019 567 7788')
+                                                            ->helperText('Support WhatsApp. Customers, riders and merchants reach admin on this number from the "WhatsApp Support" button in the apps.')
                                                             ->required(),
                                                     ]),
                                             ]),

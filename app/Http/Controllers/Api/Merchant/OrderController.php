@@ -244,6 +244,8 @@ class OrderController extends Controller
                         });
                     },
                 ]);
+                // WhatsApp click-to-chat: rider (while order active) + admin.
+                $order->withContacts('merchant');
                 $data['order'] = $order;
                 return response()->json([
                     'data' => $data,
@@ -271,6 +273,7 @@ class OrderController extends Controller
                     'order.order_addons.addon',
                     'order.qrcode_users.qrcode',
                 ]);
+                $assign->order?->withContacts('merchant');
                 $data['assign_job'] = $assign;
                 return response()->json([
                     'data' => $data,

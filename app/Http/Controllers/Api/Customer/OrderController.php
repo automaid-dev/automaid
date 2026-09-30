@@ -76,6 +76,8 @@ class OrderController extends Controller
             // Adds service_type ("Wash & Fold" / "Dry Cleaning"),
             // customer_address, merchant_name, merchant_address.
             $order->withDisplayDetails();
+            // WhatsApp click-to-chat: rider (while order active) + admin.
+            $order->withContacts('customer');
             $data['order'] = $order;
             return response()->json([
                 'data' => $data,

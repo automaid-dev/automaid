@@ -619,4 +619,87 @@ class Order extends Model implements Auditable
 
         return $this;
     }
+
+    /**
+     * Whether person-to-person contact should still be offered: the
+     * order is live (not cancelled) and hasn't been delivered yet.
+     * Riders/customers only see each other's WhatsApp during this
+     * window — once the order is done, only admin support remains.
+     */
+    public function isContactWindowOpen(): bool
+    {
+        if (in_array($this->status, [self::CANCELLED, 'cancel'], true)) {
+            return false;
+        }
+
+        return !$this->delivered()->exists();
+    }
+
+    /**
+     * WhatsApp click-to-chat contacts for the given viewer, as a list of
+     * {role, name, whatsapp, link}. Only plain name + number are ever
+     * returned — never the underlying user/profile records.
+     *
+     *  - customer: rider (accepted, while active) + admin support
+     *  - rider:    customer + merchant (while active) + admin support
+     *  - merchant: rider (accepted, while active) + admin support
+     *
+     * @param  string $viewer 'customer' | 'rider' | 'merchant'
+     * @return array<int, array{role: string, name: ?string, whatsapp: string, link: string}>
+     */
+    public function whatsappContacts(string $viewer): array
+    {
+        $ref = 'AutoMaid order #' . $this->id . ($this->series_no ? ' (' . $this->series_no . ')' : '');
+        $contacts = [];
+
+        $add = function (string $role, ?string $name, ?string $number, string $message) use (&$contacts) {
+            if (!$number) {
+                return;
+            }
+            $contacts[] = [
+                'role' => $role,
+                'name' => $name,
+                'whatsapp' => $number,
+                'link' => \App\Support\WhatsApp::link($number, $message),
+            ];
+        };
+
+        if ($this->order_type === self::BOOKING && $this->isContactWindowOpen()) {
+            $riderUser = $this->rider()->with('user')->latest('id')->first()?->user;
+            $merchantJob = $this->merchant()->with('user')->latest('id')->first()
+                ?? $this->merchant_pending()->with('user')->latest('id')->first();
+            $merchantUser = $merchantJob?->user;
+            $customerUser = $this->user()->first();
+
+            if (in_array($viewer, ['customer', 'merchant'], true)) {
+                $add('rider', $riderUser?->name, \App\Support\WhatsApp::numberOf($riderUser),
+                    "Hi, regarding {$ref}.");
+            }
+            if ($viewer === 'rider') {
+                $add('customer', $customerUser?->name, \App\Support\WhatsApp::numberOf($customerUser),
+                    "Hi, this is your AutoMaid rider regarding {$ref}.");
+                $add('merchant', $merchantUser?->name, \App\Support\WhatsApp::numberOf($merchantUser),
+                    "Hi, this is the AutoMaid rider regarding {$ref}.");
+            }
+        }
+
+        // Admin support is always available (Settings > Support &
+        // Communication > WhatsApp Number).
+        $setting = \App\Models\Setting::find(1);
+        $add('admin', 'AutoMaid Support', \App\Support\WhatsApp::normalize($setting?->whatapp_no),
+            "Hi AutoMaid Support, I need help with {$ref}.");
+
+        return $contacts;
+    }
+
+    /**
+     * Attach whatsappContacts($viewer) as a `contacts` attribute for the
+     * order detail API response.
+     */
+    public function withContacts(string $viewer): self
+    {
+        $this->setAttribute('contacts', $this->whatsappContacts($viewer));
+
+        return $this;
+    }
 }

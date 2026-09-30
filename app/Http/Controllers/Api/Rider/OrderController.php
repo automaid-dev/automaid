@@ -332,7 +332,7 @@ class OrderController extends Controller
                         });
                     },
                 ]);
-                $order->withDisplayDetails();
+                $order->withDisplayDetails()->withContacts('rider');
                 $data['order'] = $order;
                 return response()->json([
                     'data' => $data,
@@ -363,7 +363,7 @@ class OrderController extends Controller
                     'order.order_addons.addon',
                     'order.qrcode_users.qrcode',
                 ]);
-                $assign->order?->withDisplayDetails();
+                $assign->order?->withDisplayDetails()->withContacts('rider');
                 $data['assign_job'] = $assign;
                 return response()->json([
                     'data' => $data,

@@ -1,0 +1,80 @@
+diff --git a/app/Http/Controllers/Api/ProfileController.php b/app/Http/Controllers/Api/ProfileController.php
+index 8921405..d29f0c2 100644
+--- a/app/Http/Controllers/Api/ProfileController.php
++++ b/app/Http/Controllers/Api/ProfileController.php
+@@ -200,7 +200,15 @@ public function saveDevice(Request $request)
+                 ]);
+             }
+ 
+-            // update device_id
++            // A phone can only belong to one signed-in account: if another
++            // user logged in on this same device before (shared phone, or
++            // logged out without the app reaching /profile/logout), drop
++            // it from them so they stop receiving this user's pushes.
++            \App\Models\User::where('device_id', $request->device_id)
++                ->where('id', '!=', $user->id)
++                ->update(['device_id' => null]);
++
++            // update device_id (OneSignal subscription ID)
+             $user->device_id = $request->device_id;
+             $user->save();
+ 
+diff --git a/app/Services/OneSignalService.php b/app/Services/OneSignalService.php
+index 6f10991..f64da29 100644
+--- a/app/Services/OneSignalService.php
++++ b/app/Services/OneSignalService.php
+@@ -74,21 +74,31 @@ function sendOneSignalNotification($title, $message, $playerId = null, $addition
+             $fields['data'] = $additionalData;
+         }
+ 
+-        // Send to specific device
+-        if ($playerId) {
+-            $fields['include_player_ids'] = [$playerId];
+-        } 
+-        
+-        // Broadcast to all users
+-        else {
+-            $fields['included_segments'] = ['All'];
++        // Send to this one device only. $playerId is the OneSignal
++        // subscription ID the app saves via POST /profile/device
++        // (users.device_id). An empty value means "this user has no
++        // device registered" — it used to fall through to
++        // included_segments => ['All'], i.e. broadcast one person's order
++        // update to EVERY user of the app. Now it sends nothing.
++        if (empty($playerId)) {
++            return ['skipped' => true, 'reason' => 'no device registered'];
+         }
++        $fields['include_subscription_ids'] = [$playerId];
+ 
+-        $response = Http::withHeaders([
++        $response = Http::timeout(10)->withHeaders([
+             'Content-Type' => 'application/json; charset=utf-8',
+             'Authorization' => 'Key ' . $this->apiKey,
+         ])->post('https://api.onesignal.com/notifications', $fields);
+-        return $response->json();
++
++        $result = $response->json();
++        if (!$response->successful() || !empty($result['errors'])) {
++            Log::warning('OneSignal push not delivered', [
++                'app' => $typeId ? 'merchant' : 'customer',
++                'status' => $response->status(),
++                'response' => $result,
++            ]);
++        }
++        return $result;
+     }
+ 
+     /**
+@@ -133,7 +143,11 @@ public function notifyUser($user, string $type, string $title, string $body, str
+ 
+         if (!empty($user->device_id)) {
+             try {
+-                $this->sendOneSignalNotification($title, $body, $user->device_id);
++                // Riders and merchants use the partner app, which is a
++                // separate OneSignal app (ONESIGNAL_MERCHANT_APP_ID) —
++                // pushing through the customer app would never arrive.
++                $typeId = $user->hasRole(['rider', 'merchant']) ? 1 : null;
++                $this->sendOneSignalNotification($title, $body, $user->device_id, ['order_id' => $orderId], $typeId);
+             } catch (\Throwable $th) {
+                 Log::error('Failed to send push notification', ['error' => $th->getMessage(), 'user_id' => $user->id, 'type' => $type]);
+             }

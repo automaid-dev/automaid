@@ -74,21 +74,31 @@ class OneSignalService
             $fields['data'] = $additionalData;
         }
 
-        // Send to specific device
-        if ($playerId) {
-            $fields['include_player_ids'] = [$playerId];
-        } 
-        
-        // Broadcast to all users
-        else {
-            $fields['included_segments'] = ['All'];
+        // Send to this one device only. $playerId is the OneSignal
+        // subscription ID the app saves via POST /profile/device
+        // (users.device_id). An empty value means "this user has no
+        // device registered" — it used to fall through to
+        // included_segments => ['All'], i.e. broadcast one person's order
+        // update to EVERY user of the app. Now it sends nothing.
+        if (empty($playerId)) {
+            return ['skipped' => true, 'reason' => 'no device registered'];
         }
+        $fields['include_subscription_ids'] = [$playerId];
 
-        $response = Http::withHeaders([
+        $response = Http::timeout(10)->withHeaders([
             'Content-Type' => 'application/json; charset=utf-8',
             'Authorization' => 'Key ' . $this->apiKey,
         ])->post('https://api.onesignal.com/notifications', $fields);
-        return $response->json();
+
+        $result = $response->json();
+        if (!$response->successful() || !empty($result['errors'])) {
+            Log::warning('OneSignal push not delivered', [
+                'app' => $typeId ? 'merchant' : 'customer',
+                'status' => $response->status(),
+                'response' => $result,
+            ]);
+        }
+        return $result;
     }
 
     /**
@@ -133,7 +143,11 @@ class OneSignalService
 
         if (!empty($user->device_id)) {
             try {
-                $this->sendOneSignalNotification($title, $body, $user->device_id);
+                // Riders and merchants use the partner app, which is a
+                // separate OneSignal app (ONESIGNAL_MERCHANT_APP_ID) —
+                // pushing through the customer app would never arrive.
+                $typeId = $user->hasRole(['rider', 'merchant']) ? 1 : null;
+                $this->sendOneSignalNotification($title, $body, $user->device_id, ['order_id' => $orderId], $typeId);
             } catch (\Throwable $th) {
                 Log::error('Failed to send push notification', ['error' => $th->getMessage(), 'user_id' => $user->id, 'type' => $type]);
             }

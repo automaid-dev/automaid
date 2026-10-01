@@ -200,7 +200,15 @@ class ProfileController extends Controller
                 ]);
             }
 
-            // update device_id
+            // A phone can only belong to one signed-in account: if another
+            // user logged in on this same device before (shared phone, or
+            // logged out without the app reaching /profile/logout), drop
+            // it from them so they stop receiving this user's pushes.
+            \App\Models\User::where('device_id', $request->device_id)
+                ->where('id', '!=', $user->id)
+                ->update(['device_id' => null]);
+
+            // update device_id (OneSignal subscription ID)
             $user->device_id = $request->device_id;
             $user->save();
 

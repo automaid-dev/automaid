@@ -85,6 +85,7 @@ class CreateUser extends CreateRecord
                 'name' => $data['company_name'] ?? null,
                 'slug' => Str::slug($data['company_name']),
                 'unit_no' => $data['unit_no'] ?? null,
+                'floor' => $data['floor'] ?? null,
                 'block' => $data['block'] ?? null,
                 'address_line_1' => $data['address_line_1'] ?? null,
                 'address_line_2' => $data['address_line_2'] ?? null,
@@ -92,6 +93,8 @@ class CreateUser extends CreateRecord
                 'city' => $data['city'] ?? null,
                 'state_id' => $data['state_id'] ?? null,
                 'country_id' => $data['country_id'] ?? null,
+                'latitude' => $data['latitude'] ?? null,
+                'longitude' => $data['longitude'] ?? null,
                 'status' => 'active',
             ]);
 
@@ -138,6 +141,16 @@ class CreateUser extends CreateRecord
     {
         $user = static::getModel()::create($data);
         $user->assignRole($data['role']);
+
+        // Address + map pin for riders/merchants. latitude/longitude and
+        // address lines go through create() above (fillable); unit/floor/
+        // block aren't in User::$fillable, so they're set directly.
+        if (in_array($data['role'], ['rider', 'merchant'], true)) {
+            $user->unit_no = $data['unit_no'] ?? null;
+            $user->floor = $data['floor'] ?? null;
+            $user->block = $data['block'] ?? null;
+            $user->save();
+        }
 
         $addressData = $data['address'] ?? [];
         unset($data['address']);
@@ -394,6 +407,13 @@ class CreateUser extends CreateRecord
                                     ->required(),
                             ]),
                     ])->visible(fn ($get) => $get('role') === 'rider'),
+
+                // Home address + map pin — same data the rider app collects at
+                // registration. latitude/longitude are required: the
+                // auto-assign job skips riders without them.
+                Section::make('Rider Address & Location')
+                    ->schema(\App\Filament\Forms\AddressLocationFields::make())
+                    ->visible(fn ($get) => $get('role') === 'rider'),
 
                 Section::make('Password')
                     ->schema([
@@ -696,15 +716,27 @@ class CreateUser extends CreateRecord
                         CheckboxList::make('service_categories')
                             ->label('Service Categories')
                             ->options([
-                                'dry_cleaning' => 'Dry Cleaning',
-                                'shoe_cleaning' => 'Shoe Cleaning',
-                                'helmet_cleaning' => 'Helmet Cleaning',
-                                'wash_dry' => 'Wash & Dry',
+                                // Stored values must equal the labels — auto-assign
+                                // matches merchants.service_categories against
+                                // ServiceCategory::DRY_CLEANING ('Dry Cleaning'),
+                                // same as the merchant app sends.
+                                \App\Models\ServiceCategory::DRY_CLEANING => 'Dry Cleaning',
+                                \App\Models\ServiceCategory::SHOE_CLEANING => 'Shoe Cleaning',
+                                \App\Models\ServiceCategory::HELMET_CLEANING => 'Helmet Cleaning',
+                                \App\Models\ServiceCategory::WASH_AND_DRY => 'Wash & Dry',
                             ])
                             ->columns(2)
                             ->required()
                             ->rules(['array', 'min:1']),
                     ])
+                    ->visible(fn ($get) => $get('role') === 'merchant'),
+
+                // Outlet address + map pin — saved to the user, merchant
+                // profile and outlet exactly like the merchant app's
+                // registration. latitude/longitude drive auto-assign and the
+                // rider's "Navigate to merchant" button.
+                Section::make('Outlet Address & Location')
+                    ->schema(\App\Filament\Forms\AddressLocationFields::make())
                     ->visible(fn ($get) => $get('role') === 'merchant'),
 
                 Section::make('Merchant Verification')

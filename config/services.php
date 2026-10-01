@@ -119,4 +119,11 @@ return [
         'rec_secret_key' => env('RECURRING_SECRET_KEY', '9321d6ed1d1d8534156061aff3075a69'),  
     ],
 
+    // Browser key for the admin panel's map picker (Maps JavaScript API +
+    // Places API). Restrict it by HTTP referrer to app.automaid.asia/* in
+    // Google Cloud Console — it is visible in the page source.
+    'google_maps' => [
+        'browser_key' => env('GOOGLE_MAPS_BROWSER_KEY'),
+    ],
+
 ];

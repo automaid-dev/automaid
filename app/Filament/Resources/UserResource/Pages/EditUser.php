@@ -139,20 +139,11 @@ class EditUser extends EditRecord
             $this->record->rider->bank_name = $data['rider']['bank_name'];
             $this->record->rider->bank_no = $data['rider']['bank_no'];
 
-            $this->record->address_line_1 = $data['rider']['address_line_1'];
-            $this->record->address_line_2 = $data['rider']['address_line_2'];
-
-            if (isset($data['rider']['country_id'])) {
-                $this->record->country_id = $data['rider']['country_id'];
-            }
-            if (isset($data['rider']['postcode'])) {
-                $this->record->postcode = $data['rider']['postcode'];
-            }
-            if (isset($data['rider']['state_id'])) {
-                $this->record->state_id = $data['rider']['state_id'];
-            }
-            if (isset($data['rider']['city'])) {
-                $this->record->city = $data['rider']['city'];
+            // Home address + map pin live on the user row (same as the
+            // rider app's registration); latitude/longitude drive auto-assign.
+            // Saved together with the rest of the user by Filament after this.
+            foreach (['unit_no', 'floor', 'block', 'address_line_1', 'address_line_2', 'country_id', 'postcode', 'state_id', 'city', 'latitude', 'longitude'] as $field) {
+                $this->record->{$field} = $data['rider'][$field] ?? null;
             }
 
             $this->record->rider->emergency_name = $data['rider']['emergency_name'];
@@ -182,24 +173,33 @@ class EditUser extends EditRecord
 
         if (isset($data['merchant'])) {
 
-            if (isset($data['merchant']['country_id'])) {
-                $this->record->country_id = $data['merchant']['country_id'];
+            // Address + map pin go to all three places the merchant app's
+            // registration writes: the user row (auto-assign reads
+            // users.latitude/longitude), the merchant profile, and the
+            // outlet (what riders/customers see and navigate to).
+            $addressFields = ['unit_no', 'floor', 'block', 'address_line_1', 'address_line_2', 'country_id', 'postcode', 'state_id', 'city'];
+            foreach (array_merge($addressFields, ['latitude', 'longitude']) as $field) {
+                $this->record->{$field} = $data['merchant'][$field] ?? null;
             }
-            if (isset($data['merchant']['postcode'])) {
-                $this->record->postcode = $data['merchant']['postcode'];
+
+            $outlet = $this->record->merchant->outlet;
+            if (!$outlet) {
+                $outlet = new \App\Models\Outlet();
+                $outlet->name = $data['merchant']['company_name'] ?? $this->record->name;
+                $outlet->slug = \Illuminate\Support\Str::slug($outlet->name);
+                $outlet->status = 'active';
             }
-            if (isset($data['merchant']['state_id'])) {
-                $this->record->state_id = $data['merchant']['state_id'];
+            foreach (array_merge($addressFields, ['latitude', 'longitude']) as $field) {
+                $outlet->{$field} = $data['merchant'][$field] ?? null;
             }
-            if (isset($data['merchant']['city'])) {
-                $this->record->city = $data['merchant']['city'];
-            }
+            $outlet->save();
+            $this->record->merchant->outlet_id = $outlet->id;
             
             $this->record->merchant->type_merchant = $data['merchant']['type_merchant'];
             $this->record->merchant->bank_name = $data['merchant']['bank_name'];
             $this->record->merchant->bank_no = $data['merchant']['bank_no'];
-            $this->record->merchant->unit_no = $data['merchant']['unit_no'];
-            $this->record->merchant->block = $data['merchant']['block'];
+            $this->record->merchant->unit_no = $data['merchant']['unit_no'] ?? null;
+            $this->record->merchant->block = $data['merchant']['block'] ?? null;
             $this->record->merchant->address_line_1 = $data['merchant']['address_line_1'];
             $this->record->merchant->address_line_2 = $data['merchant']['address_line_2'];
 
@@ -250,12 +250,17 @@ class EditUser extends EditRecord
             $data['rider']['bank_name'] = $record->rider?->bank_name;
             $data['rider']['bank_no'] = $record->rider?->bank_no;
 
+            $data['rider']['unit_no'] = $record->unit_no;
+            $data['rider']['floor'] = $record->floor;
+            $data['rider']['block'] = $record->block;
             $data['rider']['address_line_1'] = $record->address_line_1;
             $data['rider']['address_line_2'] = $record->address_line_2;
             $data['rider']['country_id'] = $record->country_id;
             $data['rider']['postcode'] = $record->postcode;
             $data['rider']['state_id'] = $record->state_id;
             $data['rider']['city'] = $record->city;
+            $data['rider']['latitude'] = $record->latitude;
+            $data['rider']['longitude'] = $record->longitude;
             
             $data['rider']['emergency_name'] = $record->rider?->emergency_name;
             $data['rider']['emergency_phone'] = $record->rider?->emergency_phone;
@@ -279,14 +284,14 @@ class EditUser extends EditRecord
             $data['merchant']['type_merchant'] = $record->merchant?->type_merchant;
             $data['merchant']['bank_name'] = $record->merchant?->bank_name;
             $data['merchant']['bank_no'] = $record->merchant?->bank_no;
-            $data['merchant']['unit_no'] = $record->merchant?->unit_no;
-            $data['merchant']['block'] = $record->merchant?->block;
-            $data['merchant']['address_line_1'] = $record->merchant?->address_line_1;
-            $data['merchant']['address_line_2'] = $record->merchant?->address_line_2;
-            $data['merchant']['country_id'] = $record->merchant?->country_id;
-            $data['merchant']['postcode'] = $record->merchant?->postcode;
-            $data['merchant']['state_id'] = $record->merchant?->state_id;
-            $data['merchant']['city'] = $record->merchant?->city;
+            // Outlet is what the apps display/navigate to, so it wins;
+            // then the merchant profile, then the user row.
+            $outlet = $record->merchant?->outlet;
+            foreach (['unit_no', 'floor', 'block', 'address_line_1', 'address_line_2', 'country_id', 'postcode', 'state_id', 'city'] as $field) {
+                $data['merchant'][$field] = $outlet?->{$field} ?? $record->merchant?->{$field} ?? $record->{$field} ?? null;
+            }
+            $data['merchant']['latitude'] = $outlet?->latitude ?? $record->latitude;
+            $data['merchant']['longitude'] = $outlet?->longitude ?? $record->longitude;
             $data['merchant']['company_name'] = $record->merchant?->company_name;
             $data['merchant']['ssm_no'] = $record->merchant?->ssm_no;
             $data['merchant']['washer_quantity'] = $record->merchant?->washer_quantity;
@@ -663,30 +668,9 @@ class EditUser extends EditRecord
 
                         Tabs\Tab::make('Home Address')
                             ->schema([
-                                Section::make('Home Address')
-                                    ->schema([
-                                        Grid::make(2)
-                                            ->schema([
-                                                TextInput::make('rider.address_line_1')->label('Address Line 1')->placeholder('e.g No. 123, Jalan PP22'),
-                                                TextInput::make('rider.address_line_2')->label('Address Line 2 (if any)')->placeholder('e.g Taman Equine'),
-                                                Select::make('rider.country_id')
-                                                    ->label('Country')
-                                                    ->relationship('country', 'name')
-                                                    ->searchable()
-                                                    ->placeholder('Select Country')
-                                                    ->disabled(true)
-                                                    ->preload(),
-                                                TextInput::make('rider.postcode')->label('Postcode')->placeholder('e.g 43300')->disabled(true),
-                                                Select::make('rider.state_id')
-                                                    ->label('State')
-                                                    ->relationship('state', 'name')
-                                                    ->searchable()
-                                                    ->placeholder('Select State')
-                                                    ->disabled(true)
-                                                    ->preload(),
-                                                TextInput::make('rider.city')->label('City')->placeholder('e.g Seri Kembangan')->disabled(true),
-                                            ]),
-                                    ]),
+                                Section::make('Home Address & Location')
+                                    ->description('Riders are auto-assigned jobs near this pin.')
+                                    ->schema(\App\Filament\Forms\AddressLocationFields::make('rider.', required: false)),
 
                                 \Filament\Forms\Components\Actions::make([
                                     \Filament\Forms\Components\Actions\Action::make('submit')
@@ -1072,37 +1056,9 @@ class EditUser extends EditRecord
 
                         Tabs\Tab::make('Outlet Address')
                             ->schema([
-                                Section::make('Outlet Address')
-                                    ->schema([
-                                        Grid::make(2)
-                                            ->schema([
-                                                TextInput::make('merchant.unit_no')
-                                                    ->label('Unit No')
-                                                    ->default(fn ($record) => $record->merchant->unit_no)
-                                                    ->placeholder('e.g. H-9-2'),
-                                                TextInput::make('merchant.block')
-                                                    ->label('Block')
-                                                    ->placeholder('e.g. Level 1'),
-                                                TextInput::make('merchant.address_line_1')->label('Address Line 1')->placeholder('e.g No. 123, Jalan PP22'),
-                                                TextInput::make('merchant.address_line_2')->label('Address Line 2 (if any)')->placeholder('e.g Taman Equine'),
-                                                Select::make('merchant.country_id')
-                                                    ->label('Country')
-                                                    ->relationship('country', 'name')
-                                                    ->searchable()
-                                                    ->placeholder('Select Country')
-                                                    ->disabled(true)
-                                                    ->preload(),
-                                                TextInput::make('merchant.postcode')->label('Postcode')->placeholder('e.g 43300')->disabled(true),
-                                                Select::make('merchant.state_id')
-                                                    ->label('State')
-                                                    ->relationship('state', 'name')
-                                                    ->searchable()
-                                                    ->placeholder('Select State')
-                                                    ->disabled(true)
-                                                    ->preload(),
-                                                TextInput::make('merchant.city')->label('City')->placeholder('e.g Seri Kembangan')->disabled(true),
-                                            ]),
-                                    ]),
+                                Section::make('Outlet Address & Location')
+                                    ->description('Saved to the outlet the apps show and navigate to, and used to auto-assign nearby jobs.')
+                                    ->schema(\App\Filament\Forms\AddressLocationFields::make('merchant.', required: false)),
 
                                 \Filament\Forms\Components\Actions::make([
                                     \Filament\Forms\Components\Actions\Action::make('submit')
@@ -1156,10 +1112,12 @@ class EditUser extends EditRecord
                                         CheckboxList::make('merchant.service_categories')
                                             ->label('Service Categories')
                                             ->options([
-                                                'dry_cleaning' => 'Dry Cleaning',
-                                                'shoe_cleaning' => 'Shoe Cleaning',
-                                                'helmet_cleaning' => 'Helmet Cleaning',
-                                                'wash_dry' => 'Wash & Dry',
+                                                // Values must equal ServiceCategory constants —
+                                                // auto-assign matches on 'Dry Cleaning'.
+                                                \App\Models\ServiceCategory::DRY_CLEANING => 'Dry Cleaning',
+                                                \App\Models\ServiceCategory::SHOE_CLEANING => 'Shoe Cleaning',
+                                                \App\Models\ServiceCategory::HELMET_CLEANING => 'Helmet Cleaning',
+                                                \App\Models\ServiceCategory::WASH_AND_DRY => 'Wash & Dry',
                                             ])
                                             ->columns(2)
                                             ->required()

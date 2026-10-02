@@ -1,0 +1,240 @@
+diff --git a/app/Console/Commands/CancelAbandonedOrders.php b/app/Console/Commands/CancelAbandonedOrders.php
+index 83e807b..13114a9 100644
+--- a/app/Console/Commands/CancelAbandonedOrders.php
++++ b/app/Console/Commands/CancelAbandonedOrders.php
+@@ -26,34 +26,29 @@ public function handle()
+     {
+         $cutoff = Carbon::now()->subMinutes((int) $this->option('minutes'));
+ 
++        // 1. Checkouts still pending long after creation.
+         $orders = Order::where('status', Order::PENDING)
+             ->where('created_at', '<=', $cutoff)
+             ->get();
+-
+-        if ($orders->isEmpty()) {
+-            $this->info('No abandoned pending orders found.');
+-            return 0;
+-        }
+-
+-        $cancelledCount = 0;
+         foreach ($orders as $order) {
+-            $order->status = Order::CANCELLED;
+-            $order->save();
+-            $cancelledCount++;
++            $order->cancelUnpaidCheckout();
++        }
+ 
+-            // Same reasoning as OrderController::cancelPendingOrder —
+-            // the subscription history screen reads Subscription.status,
+-            // not Order.status, so this needs updating too or the
+-            // "Pending" badge would stay stuck even after the order
+-            // itself is cancelled.
+-            $subscription = $order->subscription;
+-            if ($subscription && $subscription->status === Subscription::PENDING) {
+-                $subscription->status = Subscription::CANCELLED;
+-                $subscription->save();
+-            }
++        // 2. Repair checkouts cancelled before cancelUnpaidCheckout()
++        //    existed: the order was cancelled but its Payment stayed
++        //    "pending" (and a subscription's bag stayed active) — e.g.
++        //    GKash sign-ups refused with "Recurring not available".
++        $leftovers = Order::where('status', Order::CANCELLED)
++            ->where(function ($q) {
++                $q->whereHas('payment', fn ($p) => $p->where('status', \App\Models\Payment::PENDING)->where(fn ($x) => $x->whereNull('is_paid')->orWhere('is_paid', false)))
++                  ->orWhereHas('subscription', fn ($s) => $s->where('status', Subscription::PENDING));
++            })
++            ->get();
++        foreach ($leftovers as $order) {
++            $order->cancelUnpaidCheckout();
+         }
+ 
+-        $this->info("Cancelled {$cancelledCount} abandoned pending order(s) older than {$this->option('minutes')} minutes.");
++        $this->info("Cancelled {$orders->count()} abandoned pending order(s) older than {$this->option('minutes')} minutes; repaired {$leftovers->count()} previously cancelled checkout(s).");
+         return 0;
+     }
+ }
+diff --git a/app/Http/Controllers/Api/Customer/BookingController.php b/app/Http/Controllers/Api/Customer/BookingController.php
+index a7e440d..9e09023 100644
+--- a/app/Http/Controllers/Api/Customer/BookingController.php
++++ b/app/Http/Controllers/Api/Customer/BookingController.php
+@@ -1184,7 +1184,7 @@ public function schedule(Request $request)
+                 $order->save();
+ 
+                 $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
+-                $paymentUrl = $rms->createPaymentUrl([
++                $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
+                     'amount' => $order->grand_total,
+                     'orderid' => $order->id,
+                     'bill_name' => $order->billing_name,
+@@ -1192,7 +1192,7 @@ public function schedule(Request $request)
+                     'bill_mobile' => $order->billing_phone,
+                     'bill_desc' => 'Booking',
+                     'currency' => 'MYR',
+-                ]);
++                ]));
+ 
+                 // return payment url (+ order_id so the app can verify
+                 // payment status afterwards instead of just trusting the
+diff --git a/app/Http/Controllers/Api/Customer/OrderBagController.php b/app/Http/Controllers/Api/Customer/OrderBagController.php
+index 11874d1..37e7975 100644
+--- a/app/Http/Controllers/Api/Customer/OrderBagController.php
++++ b/app/Http/Controllers/Api/Customer/OrderBagController.php
+@@ -221,7 +221,7 @@ public function placeOrder(Request $request)
+                 $order->save();
+ 
+                 $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($setting->payment_gateway_bag_purchase);
+-                $paymentUrl = $rms->createPaymentUrl([
++                $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
+                     'amount' => $order->grand_total,
+                     'orderid' => $order->id,
+                     'bill_name' => $order->billing_name,
+@@ -229,7 +229,7 @@ public function placeOrder(Request $request)
+                     'bill_mobile' => $order->billing_phone,
+                     'bill_desc' => 'Purchase Bag',
+                     'currency' => 'MYR',
+-                ]);
++                ]));
+ 
+                 // return payment url
+                 // return payment url (+ order_id so the app can verify
+diff --git a/app/Http/Controllers/Api/Customer/SubscriptionController.php b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+index 4812eb0..c89558d 100644
+--- a/app/Http/Controllers/Api/Customer/SubscriptionController.php
++++ b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+@@ -186,7 +186,7 @@ public function placeOrder(Request $request)
+ 
+             // create payment
+             $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($gatewayCode);
+-            $paymentUrl = $rms->createPaymentUrl([
++            $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+                 'bill_name' => $order->billing_name,
+@@ -223,7 +223,7 @@ public function placeOrder(Request $request)
+                 // confirmed against GKash's actual enum — see the
+                 // matching comment in CheckNextPaymentSubscription.php.
+                 'recurringtype' => 'MONTHLY',
+-            ]);
++            ]));
+             $data['url'] = $paymentUrl;
+             $data['order_id'] = $order->id;
+             return response()->json([
+@@ -365,7 +365,7 @@ public function upgrade(Request $request)
+             $order->save();
+ 
+             $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
+-            $paymentUrl = $rms->createPaymentUrl([
++            $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+                 'bill_name' => $order->billing_name,
+@@ -376,7 +376,7 @@ public function upgrade(Request $request)
+                 // See the matching comment on the initial subscribe
+                 // flow — recurring only works with card.
+                 'channel' => 'credit',
+-            ]);
++            ]));
+ 
+             $data['url'] = $paymentUrl;
+             $data['order_id'] = $order->id;
+@@ -492,7 +492,7 @@ public function updateSubscription(Request $request)
+             $order->save();
+ 
+             $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
+-            $paymentUrl = $rms->createPaymentUrl([
++            $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+                 'bill_name' => $order->billing_name,
+@@ -503,7 +503,7 @@ public function updateSubscription(Request $request)
+                 // See the matching comment on the initial subscribe
+                 // flow — recurring only works with card.
+                 'channel' => 'credit',
+-            ]);
++            ]));
+ 
+             // return payment url (+ order_id so the app can verify
+             // payment status afterwards instead of just trusting the
+@@ -558,6 +558,13 @@ public function history(Request $request)
+                     Order::SUBSCRIPTION_UPDATE,
+                     Order::SUBSCRIPTION_UPGRADE,
+                 ])
++                // Hide checkouts that were cancelled without ever being
++                // paid (payment page refused / closed) — they're not
++                // purchases. Paid-then-refunded orders still show.
++                ->where(function ($q) {
++                    $q->where('status', '!=', Order::CANCELLED)
++                      ->orWhereHas('payment', fn ($p) => $p->where('is_paid', true));
++                })
+                 ->with('subscription')
+                 ->orderByDesc('id')
+                 ->get();
+diff --git a/app/Models/Order.php b/app/Models/Order.php
+index 6526b3e..c826835 100644
+--- a/app/Models/Order.php
++++ b/app/Models/Order.php
+@@ -486,6 +486,64 @@ public function birthday()
+         return $this->hasOne('App\Models\BirthdayUser', 'order_id', 'id');
+     }
+ 
++    /**
++     * Cancel a checkout that was never paid, together with everything
++     * created for it before the customer reached the payment page: the
++     * Payment row, a pending Subscription, and the subscription's bag
++     * (which sign-up creates already marked status_payment = paid).
++     * Never touches anything that was actually paid. Safe to re-run.
++     */
++    public function cancelUnpaidCheckout(): void
++    {
++        if ($this->status === self::PAID) {
++            return;
++        }
++        $payment = $this->payment;
++        if ($payment && ($payment->is_paid || $payment->status === \App\Models\Payment::PAID)) {
++            return; // money was taken — leave it for the webhook / admin
++        }
++
++        $this->status = self::CANCELLED;
++        $this->save();
++
++        if ($payment && $payment->status !== 'cancelled') {
++            $payment->status = 'cancelled';
++            $payment->save();
++        }
++
++        $subscription = $this->subscription;
++        if ($subscription && $subscription->status === \App\Models\Subscription::PENDING) {
++            $subscription->status = \App\Models\Subscription::CANCELLED;
++            $subscription->save();
++        }
++
++        if ($this->order_type === self::SUBSCRIPTION) {
++            \App\Models\Bag::where('order_id', $this->id)
++                ->where('status', '!=', \App\Models\Bag::CANCELLED)
++                ->update(['status' => \App\Models\Bag::CANCELLED]);
++        }
++    }
++
++    /**
++     * Run $createPaymentUrl; if the gateway refuses or is unreachable,
++     * cancel this unpaid checkout straight away (instead of leaving it
++     * "pending" for the hourly cleanup) and rethrow the friendly error.
++     */
++    public function paymentUrlOrCancel(callable $createPaymentUrl): string
++    {
++        try {
++            return $createPaymentUrl();
++        } catch (\Throwable $e) {
++            \Illuminate\Support\Facades\Log::warning('Payment page could not be created; checkout cancelled', [
++                'order_id' => $this->id,
++                'order_type' => $this->order_type,
++                'error' => $e->getMessage(),
++            ]);
++            $this->cancelUnpaidCheckout();
++            throw $e;
++        }
++    }
++
+     /**
+      * [insurance description]
+      * @return [type] [description]

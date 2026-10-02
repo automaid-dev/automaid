@@ -186,7 +186,7 @@ class SubscriptionController extends Controller
 
             // create payment
             $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($gatewayCode);
-            $paymentUrl = $rms->createPaymentUrl([
+            $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
                 'bill_name' => $order->billing_name,
@@ -223,7 +223,7 @@ class SubscriptionController extends Controller
                 // confirmed against GKash's actual enum — see the
                 // matching comment in CheckNextPaymentSubscription.php.
                 'recurringtype' => 'MONTHLY',
-            ]);
+            ]));
             $data['url'] = $paymentUrl;
             $data['order_id'] = $order->id;
             return response()->json([
@@ -365,7 +365,7 @@ class SubscriptionController extends Controller
             $order->save();
 
             $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
-            $paymentUrl = $rms->createPaymentUrl([
+            $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
                 'bill_name' => $order->billing_name,
@@ -376,7 +376,7 @@ class SubscriptionController extends Controller
                 // See the matching comment on the initial subscribe
                 // flow — recurring only works with card.
                 'channel' => 'credit',
-            ]);
+            ]));
 
             $data['url'] = $paymentUrl;
             $data['order_id'] = $order->id;
@@ -492,7 +492,7 @@ class SubscriptionController extends Controller
             $order->save();
 
             $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
-            $paymentUrl = $rms->createPaymentUrl([
+            $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
                 'bill_name' => $order->billing_name,
@@ -503,7 +503,7 @@ class SubscriptionController extends Controller
                 // See the matching comment on the initial subscribe
                 // flow — recurring only works with card.
                 'channel' => 'credit',
-            ]);
+            ]));
 
             // return payment url (+ order_id so the app can verify
             // payment status afterwards instead of just trusting the
@@ -558,6 +558,13 @@ class SubscriptionController extends Controller
                     Order::SUBSCRIPTION_UPDATE,
                     Order::SUBSCRIPTION_UPGRADE,
                 ])
+                // Hide checkouts that were cancelled without ever being
+                // paid (payment page refused / closed) — they're not
+                // purchases. Paid-then-refunded orders still show.
+                ->where(function ($q) {
+                    $q->where('status', '!=', Order::CANCELLED)
+                      ->orWhereHas('payment', fn ($p) => $p->where('is_paid', true));
+                })
                 ->with('subscription')
                 ->orderByDesc('id')
                 ->get();

@@ -1184,7 +1184,7 @@ class BookingController extends Controller
                 $order->save();
 
                 $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
-                $paymentUrl = $rms->createPaymentUrl([
+                $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
                     'amount' => $order->grand_total,
                     'orderid' => $order->id,
                     'bill_name' => $order->billing_name,
@@ -1192,7 +1192,7 @@ class BookingController extends Controller
                     'bill_mobile' => $order->billing_phone,
                     'bill_desc' => 'Booking',
                     'currency' => 'MYR',
-                ]);
+                ]));
 
                 // return payment url (+ order_id so the app can verify
                 // payment status afterwards instead of just trusting the

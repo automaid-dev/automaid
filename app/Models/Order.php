@@ -487,6 +487,64 @@ class Order extends Model implements Auditable
     }
 
     /**
+     * Cancel a checkout that was never paid, together with everything
+     * created for it before the customer reached the payment page: the
+     * Payment row, a pending Subscription, and the subscription's bag
+     * (which sign-up creates already marked status_payment = paid).
+     * Never touches anything that was actually paid. Safe to re-run.
+     */
+    public function cancelUnpaidCheckout(): void
+    {
+        if ($this->status === self::PAID) {
+            return;
+        }
+        $payment = $this->payment;
+        if ($payment && ($payment->is_paid || $payment->status === \App\Models\Payment::PAID)) {
+            return; // money was taken — leave it for the webhook / admin
+        }
+
+        $this->status = self::CANCELLED;
+        $this->save();
+
+        if ($payment && $payment->status !== 'cancelled') {
+            $payment->status = 'cancelled';
+            $payment->save();
+        }
+
+        $subscription = $this->subscription;
+        if ($subscription && $subscription->status === \App\Models\Subscription::PENDING) {
+            $subscription->status = \App\Models\Subscription::CANCELLED;
+            $subscription->save();
+        }
+
+        if ($this->order_type === self::SUBSCRIPTION) {
+            \App\Models\Bag::where('order_id', $this->id)
+                ->where('status', '!=', \App\Models\Bag::CANCELLED)
+                ->update(['status' => \App\Models\Bag::CANCELLED]);
+        }
+    }
+
+    /**
+     * Run $createPaymentUrl; if the gateway refuses or is unreachable,
+     * cancel this unpaid checkout straight away (instead of leaving it
+     * "pending" for the hourly cleanup) and rethrow the friendly error.
+     */
+    public function paymentUrlOrCancel(callable $createPaymentUrl): string
+    {
+        try {
+            return $createPaymentUrl();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Payment page could not be created; checkout cancelled', [
+                'order_id' => $this->id,
+                'order_type' => $this->order_type,
+                'error' => $e->getMessage(),
+            ]);
+            $this->cancelUnpaidCheckout();
+            throw $e;
+        }
+    }
+
+    /**
      * [insurance description]
      * @return [type] [description]
      */

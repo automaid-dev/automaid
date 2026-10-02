@@ -221,7 +221,7 @@ class OrderBagController extends Controller
                 $order->save();
 
                 $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($setting->payment_gateway_bag_purchase);
-                $paymentUrl = $rms->createPaymentUrl([
+                $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
                     'amount' => $order->grand_total,
                     'orderid' => $order->id,
                     'bill_name' => $order->billing_name,
@@ -229,7 +229,7 @@ class OrderBagController extends Controller
                     'bill_mobile' => $order->billing_phone,
                     'bill_desc' => 'Purchase Bag',
                     'currency' => 'MYR',
-                ]);
+                ]));
 
                 // return payment url
                 // return payment url (+ order_id so the app can verify

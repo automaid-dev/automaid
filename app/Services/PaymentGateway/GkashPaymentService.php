@@ -91,7 +91,22 @@ class GkashPaymentService implements PaymentGatewayInterface
             'callbackurl' => $payload['callbackurl'],
         ]);
 
-        $response = Http::asJson()->post($this->baseUrl . '/api/payment/form', $payload);
+        // What the customer sees if GKash refuses or can't be reached.
+        // GKash's own reason (e.g. "Recurring not available for this
+        // user") is technical and only goes to the Laravel log below.
+        $friendlyMessage = !empty($payload['recurringtype'])
+            ? 'Subscriptions are temporarily unavailable. Please try again later or contact AutoMaid support.'
+            : 'Online payment is temporarily unavailable. Please try again in a few minutes or contact AutoMaid support.';
+
+        try {
+            $response = Http::asJson()->timeout(20)->post($this->baseUrl . '/api/payment/form', $payload);
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            \Log::error('GkashPaymentService::createPaymentUrl could not reach GKash', [
+                'cart_id' => $cartId,
+                'error' => $e->getMessage(),
+            ]);
+            throw new \Exception($friendlyMessage);
+        }
         $result = $response->json();
 
         if (!$response->successful() || empty($result['redirect'])) {
@@ -100,7 +115,8 @@ class GkashPaymentService implements PaymentGatewayInterface
                 'response_status' => $response->status(),
                 'response_body' => $result,
             ]);
-            throw new \Exception('Could not create GKash payment: ' . ($result['message'] ?? $result['status'] ?? 'unknown error'));
+            // Raw GKash reason is in the log entry above.
+            throw new \Exception($friendlyMessage);
         }
 
         if (!empty($result['redirect']['url'])) {
@@ -118,7 +134,11 @@ class GkashPaymentService implements PaymentGatewayInterface
             return route('webhook.gkash.checkout-form', ['orderid' => $data['orderid']]);
         }
 
-        throw new \Exception('GKash response had no redirect.url or redirect.html.');
+        \Log::error('GkashPaymentService::createPaymentUrl: response had no redirect.url or redirect.html', [
+            'cart_id' => $cartId,
+            'response_body' => $result,
+        ]);
+        throw new \Exception($friendlyMessage);
     }
 
     /**

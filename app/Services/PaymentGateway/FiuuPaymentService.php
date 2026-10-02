@@ -24,6 +24,8 @@ class FiuuPaymentService implements PaymentGatewayInterface
     protected $recVerifyKey;
     protected $recSecretKey;
 
+    protected $environment;
+
     /**
      * [__construct description]
      */
@@ -43,6 +45,106 @@ class FiuuPaymentService implements PaymentGatewayInterface
         $this->recMerchantId = config('services.recurring.rec_merchant_id');
         $this->recVerifyKey = config('services.recurring.rec_verify_key');
         $this->recSecretKey = config('services.recurring.rec_secret_key');
+    }
+
+    /**
+     * The Fiuu account used for subscriptions (sign-up card payment,
+     * card update, upgrade top-up AND the monthly token charge). A card
+     * token can only be charged by the merchant ID that created it, so
+     * everything subscription-related runs on the same account:
+     * RECURRING_MERCHANT_ID / RECURRING_VERIFY_KEY / RECURRING_SECRET_KEY.
+     * Falls back to the normal account if those aren't configured.
+     */
+    public static function recurring(): self
+    {
+        $instance = new self();
+        return $instance->forMerchant($instance->recMerchantId);
+    }
+
+    /**
+     * Same service, switched to whichever of our two Fiuu accounts owns
+     * $merchantId (the `domain` Fiuu sends back, or the merchant ID a
+     * stored token was created under). Unknown/empty -> normal account.
+     */
+    public function forMerchant(?string $merchantId): self
+    {
+        $clone = clone $this;
+        if ($merchantId && $this->recMerchantId && $merchantId === $this->recMerchantId
+            && $this->recVerifyKey && $this->recSecretKey) {
+            $clone->merchantId = $this->recMerchantId;
+            $clone->subMerchantId = null;
+            $clone->verifyKey = $this->recVerifyKey;
+            $clone->secretKey = $this->recSecretKey;
+        }
+        return $clone;
+    }
+
+    public function getMerchantId(): ?string
+    {
+        return $this->merchantId;
+    }
+
+    /**
+     * Charge a stored card token (Fiuu Recurring API v7, RecordType "T",
+     * merchant-initiated). Request format and checksum per Fiuu's
+     * "Recurring API Specification v7.1.4":
+     *   T|MerchantID|SubMerchant|Token|OrderID|Currency|Amount|Name|Email|Mobile|Desc|Checksum|CustomerId
+     *   Checksum = md5(RecordType . MerchantID . SubMerchant . Token . OrderID . Currency . Amount . VerifyKey)
+     *
+     * IMPORTANT: an 'accepted' reply only means Fiuu accepted the
+     * request. The actual result (00 paid / 11 failed / 22 pending) is
+     * POSTed later to the merchant Callback URL — see
+     * SubscriptionRenewalService::handleFiuuCallback(). Never treat
+     * 'accepted' as paid.
+     *
+     * @return array{accepted: bool, tran_id: ?string, reason: ?string, raw: mixed}
+     */
+    public function chargeToken(string $token, string $orderRef, $amount, ?string $name, ?string $email, ?string $phone, ?string $customerId = null, string $description = 'AutoMaid Subscription'): array
+    {
+        $amount = number_format((float) $amount, 2, '.', '');
+        $sub = '';
+        $clean = fn ($v) => str_replace('|', ' ', (string) $v); // '|' is the field separator
+        $checksum = md5('T' . $this->merchantId . $sub . $token . $orderRef . 'MYR' . $amount . $this->verifyKey);
+
+        $dataString = implode('|', [
+            'T', $this->merchantId, $sub, $token, $orderRef, 'MYR', $amount,
+            $clean($name), $clean($email), $clean($phone), $clean($description),
+            $checksum, $clean($customerId),
+        ]);
+
+        $url = rtrim($this->recBaseUrl ?: 'https://pay.fiuu.com', '/') . '/RMS/API/Recurring/input_v7.php';
+        try {
+            $resp = Http::asForm()->timeout(30)->post($url, ['0' => $dataString]);
+            $json = $resp->json();
+        } catch (\Throwable $e) {
+            return ['accepted' => false, 'tran_id' => null, 'reason' => 'Could not reach Fiuu: ' . $e->getMessage(), 'raw' => null];
+        }
+
+        $first = is_array($json) ? ($json[0] ?? $json) : null;
+        $accepted = is_array($first) && ($first['status'] ?? null) === 'accepted';
+
+        return [
+            'accepted' => $accepted,
+            'tran_id' => is_array($first) ? (isset($first['tranID']) ? (string) $first['tranID'] : null) : null,
+            'reason' => is_array($first) ? ($first['reason'] ?? null) : 'Unexpected response',
+            'raw' => $json ?? $resp->body(),
+        ];
+    }
+
+    /**
+     * Verify the skey on a recurring-result callback. Fiuu's recurring
+     * spec sample signs with the Verify Key, while normal payment
+     * callbacks sign with the Secret Key — accept either (both are
+     * private to us), using the keys of the account named in `domain`.
+     */
+    public function verifyRecurringCallback(array $data): bool
+    {
+        $svc = $this->forMerchant($data['domain'] ?? null);
+        $key0 = md5(($data['tranID'] ?? '') . ($data['orderid'] ?? '') . ($data['status'] ?? '') . ($data['domain'] ?? '') . ($data['amount'] ?? '') . ($data['currency'] ?? ''));
+        $base = ($data['paydate'] ?? '') . ($data['domain'] ?? '') . $key0 . ($data['appcode'] ?? '');
+        $skey = (string) ($data['skey'] ?? '');
+        return $skey !== ''
+            && (hash_equals(md5($base . $svc->verifyKey), $skey) || hash_equals(md5($base . $svc->secretKey), $skey));
     }
 
     /**
@@ -168,7 +270,10 @@ class FiuuPaymentService implements PaymentGatewayInterface
      */
     public function checkVerifySignature(array $data)
     {
-        $rms = new Payment($this->merchantId, $this->verifyKey, $this->secretKey, $this->environment);      
+        // Subscription payments run on the recurring account, so verify
+        // with the keys of whichever account Fiuu says sent this.
+        $svc = $this->forMerchant($data['domain'] ?? null);
+        $rms = new Payment($svc->merchantId, $svc->verifyKey, $svc->secretKey, $this->environment);      
         $key = md5($data['tranID'] . $data['orderid'] . $data['status'] . $data['domain'] . $data['amount'] . $data['currency']);
         return $rms->verifySignature($data['paydate'], $data['domain'], $key, $data['appcode'], $data['skey']);
     }

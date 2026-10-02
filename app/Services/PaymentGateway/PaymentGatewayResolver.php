@@ -26,4 +26,17 @@ class PaymentGatewayResolver
             default => app(FiuuPaymentService::class),
         };
     }
+
+    /**
+     * Same as resolve(), but for subscription payments (sign-up, upgrade
+     * top-up, card update). On Fiuu these run on the recurring merchant
+     * account (RECURRING_MERCHANT_ID) so the card token Fiuu returns can
+     * later be charged monthly by that same account.
+     */
+    public function resolveForSubscription(?string $gatewayCode): PaymentGatewayInterface
+    {
+        return $gatewayCode === self::GKASH
+            ? app(GkashPaymentService::class)
+            : FiuuPaymentService::recurring();
+    }
 }

@@ -80,6 +80,13 @@ class FiuuController extends Controller
             $content = $request->getContent();
             parse_str($content, $data);
 
+            // Monthly renewal results (OrderID "SR...") come from Fiuu's
+            // recurring API, not from a checkout — handled separately.
+            if (\App\Models\SubscriptionRenewalCharge::isReference($data['orderid'] ?? null)) {
+                return response((new \App\Services\SubscriptionRenewalService())->handleFiuuCallback($data), 200)
+                    ->header('Content-Type', 'text/plain');
+            }
+
             // verify data
             $checkPayment = $this->rms->checkVerifySignature($data);        
         }
@@ -238,6 +245,13 @@ class FiuuController extends Controller
             // get data request
             $content = $request->getContent();
             parse_str($content, $data);
+
+            // Monthly renewal results (OrderID "SR...") come from Fiuu's
+            // recurring API, not from a checkout — handled separately.
+            if (\App\Models\SubscriptionRenewalCharge::isReference($data['orderid'] ?? null)) {
+                return response((new \App\Services\SubscriptionRenewalService())->handleFiuuCallback($data), 200)
+                    ->header('Content-Type', 'text/plain');
+            }
 
             // verify data
             $checkPayment = $this->rms->checkVerifySignature($data);        
@@ -553,6 +567,7 @@ class FiuuController extends Controller
                                     'subscription_id' => $subscription->id, 
                                     'transaction_id' => $transaction->id,
                                     'token' => $token, 
+                                    'merchant_id' => $data['domain'] ?? null,
                                     'payment_date' => $subscription->start_date,
                                     'next_payment_date' => $subscription->end_date,
                                     'data' => json_encode($data_rec), 
@@ -761,6 +776,13 @@ class FiuuController extends Controller
             $content = $request->getContent();
             parse_str($content, $data);
 
+            // Monthly renewal results (OrderID "SR...") come from Fiuu's
+            // recurring API, not from a checkout — handled separately.
+            if (\App\Models\SubscriptionRenewalCharge::isReference($data['orderid'] ?? null)) {
+                return response((new \App\Services\SubscriptionRenewalService())->handleFiuuCallback($data), 200)
+                    ->header('Content-Type', 'text/plain');
+            }
+
             // verify data
             $checkPayment = $this->rms->checkVerifySignature($data);        
         }
@@ -1075,6 +1097,7 @@ class FiuuController extends Controller
                                     'subscription_id' => $subscription->id, 
                                     'transaction_id' => $transaction->id,
                                     'token' => $token, 
+                                    'merchant_id' => $data['domain'] ?? null,
                                     'payment_date' => $subscription->start_date,
                                     'next_payment_date' => $subscription->end_date,
                                     'data' => json_encode($data_rec), 
@@ -1237,11 +1260,5 @@ class FiuuController extends Controller
         }
     }
 
-    public function getTest(Request $request)
-    {
-        $order = \App\Models\Order::find(1004);
-        $recurring = $this->rms->getPaymentRequest2($order, 'TK_3112_83466606402246880666');
-        dd($recurring);
-    }
 
 }

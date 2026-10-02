@@ -1,0 +1,849 @@
+diff --git a/app/Console/Commands/CheckNextPaymentSubscription.php b/app/Console/Commands/CheckNextPaymentSubscription.php
+index 884ba4b..3cdbbc3 100644
+--- a/app/Console/Commands/CheckNextPaymentSubscription.php
++++ b/app/Console/Commands/CheckNextPaymentSubscription.php
+@@ -27,7 +27,7 @@ class CheckNextPaymentSubscription extends Command
+      *
+      * @var string
+      */
+-    protected $description = 'Command description';
++    protected $description = 'Charge subscriptions whose next payment date has arrived (Fiuu: result confirmed by callback)';
+ 
+     /**
+      * Execute the console command.
+@@ -63,6 +63,23 @@ public function handle()
+                 // get subscription info
+                 $subscription = $recurring->subscription;
+ 
++                // Fiuu: charge request only — the subscription is extended
++                // when Fiuu's callback confirms payment (see
++                // SubscriptionRenewalService). The old inline flow below
++                // treated Fiuu's "accepted" as "paid", reused the same
++                // OrderID every month and billed the original sign-up
++                // amount even after an upgrade.
++                if ($subscription->payment_gateway !== 'gkash') {
++                    try {
++                        $result = (new \App\Services\SubscriptionRenewalService())->chargeFiuu($recurring);
++                        $this->line("Subscription #{$subscription->id}: [{$result['action']}] {$result['message']}");
++                    } catch (\Throwable $e) {
++                        \Illuminate\Support\Facades\Log::error('Fiuu renewal charge crashed', ['subscription_id' => $subscription->id, 'error' => $e->getMessage()]);
++                        $this->error("Subscription #{$subscription->id}: " . $e->getMessage());
++                    }
++                    continue;
++                }
++
+                 // get payment info
+                 $payment = $recurring->payment;
+                 if ($recurring->payment->data) {
+diff --git a/app/Console/Commands/TestFiuuRenewal.php b/app/Console/Commands/TestFiuuRenewal.php
+new file mode 100644
+index 0000000..d3af126
+--- /dev/null
++++ b/app/Console/Commands/TestFiuuRenewal.php
+@@ -0,0 +1,69 @@
++<?php
++
++namespace App\Console\Commands;
++
++use App\Models\Subscription;
++use App\Models\SubscriptionRenewalCharge;
++use App\Services\SubscriptionRenewalService;
++use Illuminate\Console\Command;
++
++/**
++ * Run the monthly Fiuu renewal for ONE subscription right now, without
++ * waiting for its billing date. Dry run by default; --charge really
++ * charges the stored card. The result arrives on Fiuu's callback a few
++ * seconds later — re-run with --status to see it.
++ *
++ *   php artisan automaid:fiuu-test-renewal 326            # dry run
++ *   php artisan automaid:fiuu-test-renewal 326 --charge   # real charge
++ *   php artisan automaid:fiuu-test-renewal 326 --status   # show attempts
++ */
++class TestFiuuRenewal extends Command
++{
++    protected $signature = 'automaid:fiuu-test-renewal {subscription_id} {--charge : Really charge the stored card} {--status : Only list renewal attempts}';
++    protected $description = 'Test the Fiuu monthly renewal for one subscription (dry run unless --charge)';
++
++    public function handle(): int
++    {
++        $subscription = Subscription::find($this->argument('subscription_id'));
++        if (!$subscription) {
++            $this->error('Subscription not found.');
++            return self::FAILURE;
++        }
++
++        $this->info("Subscription #{$subscription->id} | user #{$subscription->user_id} | plan {$subscription->plan_code} | status {$subscription->status} | gateway " . ($subscription->payment_gateway ?? 'fiuu') . " | ends " . ($subscription->end_date ?? '-'));
++
++        $attempts = SubscriptionRenewalCharge::where('subscription_id', $subscription->id)->orderBy('id')->get();
++        if ($attempts->isNotEmpty()) {
++            $this->table(['Reference', 'Cycle', 'Amount', 'Status', 'Fiuu tranID', 'Reason', 'Created'], $attempts->map(fn ($c) => [
++                $c->reference, $c->cycle_date?->toDateString(), $c->amount, $c->status, $c->tran_id, $c->reason, $c->created_at,
++            ])->all());
++        }
++        if ($this->option('status')) {
++            return self::SUCCESS;
++        }
++
++        if ($subscription->payment_gateway === 'gkash') {
++            $this->error('This subscription is on GKash; this command only tests Fiuu.');
++            return self::FAILURE;
++        }
++
++        $recurring = $subscription->recurring_active;
++        if (!$recurring) {
++            $this->error('No active stored card token for this subscription (did Fiuu return a token in extraP at sign-up?).');
++            return self::FAILURE;
++        }
++        $this->line('Token account: ' . ($recurring->merchant_id ?: '(normal Fiuu account — signed up before the recurring account)') . ' | next payment date ' . $recurring->next_payment_date);
++
++        $charge = (bool) $this->option('charge');
++        if ($charge && !$this->confirm('This will REALLY charge the customer\'s card now. Continue?')) {
++            return self::SUCCESS;
++        }
++
++        $result = (new SubscriptionRenewalService())->chargeFiuu($recurring, dryRun: !$charge);
++        $this->line("[{$result['action']}] {$result['message']}");
++        if ($result['action'] === 'accepted') {
++            $this->line('Fiuu will POST the result to the callback URL shortly. Check with: php artisan automaid:fiuu-test-renewal ' . $subscription->id . ' --status');
++        }
++        return self::SUCCESS;
++    }
++}
+diff --git a/app/Http/Controllers/Api/Customer/SubscriptionController.php b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+index 422b374..4812eb0 100644
+--- a/app/Http/Controllers/Api/Customer/SubscriptionController.php
++++ b/app/Http/Controllers/Api/Customer/SubscriptionController.php
+@@ -185,7 +185,7 @@ public function placeOrder(Request $request)
+             $order->save();
+ 
+             // create payment
+-            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
++            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($gatewayCode);
+             $paymentUrl = $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+@@ -364,7 +364,7 @@ public function upgrade(Request $request)
+             $order->payment_gateway = $subscription->payment_gateway;
+             $order->save();
+ 
+-            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
++            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
+             $paymentUrl = $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+@@ -491,7 +491,7 @@ public function updateSubscription(Request $request)
+             $order->payment_gateway = $subscription->payment_gateway;
+             $order->save();
+ 
+-            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
++            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
+             $paymentUrl = $rms->createPaymentUrl([
+                 'amount' => $order->grand_total,
+                 'orderid' => $order->id,
+diff --git a/app/Http/Controllers/Webhook/FiuuController.php b/app/Http/Controllers/Webhook/FiuuController.php
+index 26bebd4..7db004d 100644
+--- a/app/Http/Controllers/Webhook/FiuuController.php
++++ b/app/Http/Controllers/Webhook/FiuuController.php
+@@ -80,6 +80,13 @@ public function getReturn(Request $request)
+             $content = $request->getContent();
+             parse_str($content, $data);
+ 
++            // Monthly renewal results (OrderID "SR...") come from Fiuu's
++            // recurring API, not from a checkout — handled separately.
++            if (\App\Models\SubscriptionRenewalCharge::isReference($data['orderid'] ?? null)) {
++                return response((new \App\Services\SubscriptionRenewalService())->handleFiuuCallback($data), 200)
++                    ->header('Content-Type', 'text/plain');
++            }
++
+             // verify data
+             $checkPayment = $this->rms->checkVerifySignature($data);        
+         }
+@@ -239,6 +246,13 @@ public function getNotification(Request $request)
+             $content = $request->getContent();
+             parse_str($content, $data);
+ 
++            // Monthly renewal results (OrderID "SR...") come from Fiuu's
++            // recurring API, not from a checkout — handled separately.
++            if (\App\Models\SubscriptionRenewalCharge::isReference($data['orderid'] ?? null)) {
++                return response((new \App\Services\SubscriptionRenewalService())->handleFiuuCallback($data), 200)
++                    ->header('Content-Type', 'text/plain');
++            }
++
+             // verify data
+             $checkPayment = $this->rms->checkVerifySignature($data);        
+         }
+@@ -553,6 +567,7 @@ public function getNotification(Request $request)
+                                     'subscription_id' => $subscription->id, 
+                                     'transaction_id' => $transaction->id,
+                                     'token' => $token, 
++                                    'merchant_id' => $data['domain'] ?? null,
+                                     'payment_date' => $subscription->start_date,
+                                     'next_payment_date' => $subscription->end_date,
+                                     'data' => json_encode($data_rec), 
+@@ -761,6 +776,13 @@ public function getCallback(Request $request)
+             $content = $request->getContent();
+             parse_str($content, $data);
+ 
++            // Monthly renewal results (OrderID "SR...") come from Fiuu's
++            // recurring API, not from a checkout — handled separately.
++            if (\App\Models\SubscriptionRenewalCharge::isReference($data['orderid'] ?? null)) {
++                return response((new \App\Services\SubscriptionRenewalService())->handleFiuuCallback($data), 200)
++                    ->header('Content-Type', 'text/plain');
++            }
++
+             // verify data
+             $checkPayment = $this->rms->checkVerifySignature($data);        
+         }
+@@ -1075,6 +1097,7 @@ public function getCallback(Request $request)
+                                     'subscription_id' => $subscription->id, 
+                                     'transaction_id' => $transaction->id,
+                                     'token' => $token, 
++                                    'merchant_id' => $data['domain'] ?? null,
+                                     'payment_date' => $subscription->start_date,
+                                     'next_payment_date' => $subscription->end_date,
+                                     'data' => json_encode($data_rec), 
+@@ -1237,11 +1260,5 @@ public function getCallback(Request $request)
+         }
+     }
+ 
+-    public function getTest(Request $request)
+-    {
+-        $order = \App\Models\Order::find(1004);
+-        $recurring = $this->rms->getPaymentRequest2($order, 'TK_3112_83466606402246880666');
+-        dd($recurring);
+-    }
+ 
+ }
+diff --git a/app/Models/CustomerNotification.php b/app/Models/CustomerNotification.php
+index 95117bf..72a2962 100644
+--- a/app/Models/CustomerNotification.php
++++ b/app/Models/CustomerNotification.php
+@@ -25,6 +25,8 @@ class CustomerNotification extends Model
+     const BAG_PURCHASED = 'bag_purchased';
+     const SUBSCRIPTION_CREATED = 'subscription_created';
+     const SUBSCRIPTION_CANCELLED = 'subscription_cancelled';
++    const SUBSCRIPTION_RENEWED = 'subscription_renewed';
++    const SUBSCRIPTION_RENEWAL_FAILED = 'subscription_renewal_failed';
+     const NEW_BOOKING = 'new_booking';
+     const RIDER_ACCEPTED = 'rider_accepted';
+     const RIDER_ON_THE_WAY_TO_DELIVER = 'rider_on_the_way_to_deliver';
+diff --git a/app/Models/SubscriptionRenewalCharge.php b/app/Models/SubscriptionRenewalCharge.php
+new file mode 100644
+index 0000000..e94387c
+--- /dev/null
++++ b/app/Models/SubscriptionRenewalCharge.php
+@@ -0,0 +1,47 @@
++<?php
++
++namespace App\Models;
++
++use Illuminate\Database\Eloquent\Model;
++
++/**
++ * One monthly charge attempt on a stored card token — see the
++ * create_subscription_renewal_charges_table migration.
++ */
++class SubscriptionRenewalCharge extends Model
++{
++    protected $guarded = ['id'];
++    protected $table = 'subscription_renewal_charges';
++
++    const PENDING = 'pending';
++    const ACCEPTED = 'accepted'; // Fiuu took the request; waiting for the callback
++    const PAID = 'paid';
++    const FAILED = 'failed';
++
++    /** Give up on a billing cycle after this many failed attempts. */
++    const MAX_ATTEMPTS = 3;
++
++    /** Prefix of the OrderID we send to Fiuu — how callbacks are recognised. */
++    const REFERENCE_PREFIX = 'SR';
++
++    protected $casts = [
++        'cycle_date' => 'date',
++        'result_at' => 'datetime',
++    ];
++
++    public function subscription()
++    {
++        return $this->belongsTo(Subscription::class);
++    }
++
++    public function paymentRecurring()
++    {
++        return $this->belongsTo(PaymentRecurring::class);
++    }
++
++    public static function isReference(?string $orderId): bool
++    {
++        return is_string($orderId) && str_starts_with($orderId, self::REFERENCE_PREFIX)
++            && self::where('reference', $orderId)->exists();
++    }
++}
+diff --git a/app/Services/PaymentGateway/FiuuPaymentService.php b/app/Services/PaymentGateway/FiuuPaymentService.php
+index f7a45b7..ca9a863 100644
+--- a/app/Services/PaymentGateway/FiuuPaymentService.php
++++ b/app/Services/PaymentGateway/FiuuPaymentService.php
+@@ -24,6 +24,8 @@ class FiuuPaymentService implements PaymentGatewayInterface
+     protected $recVerifyKey;
+     protected $recSecretKey;
+ 
++    protected $environment;
++
+     /**
+      * [__construct description]
+      */
+@@ -45,6 +47,106 @@ public function __construct()
+         $this->recSecretKey = config('services.recurring.rec_secret_key');
+     }
+ 
++    /**
++     * The Fiuu account used for subscriptions (sign-up card payment,
++     * card update, upgrade top-up AND the monthly token charge). A card
++     * token can only be charged by the merchant ID that created it, so
++     * everything subscription-related runs on the same account:
++     * RECURRING_MERCHANT_ID / RECURRING_VERIFY_KEY / RECURRING_SECRET_KEY.
++     * Falls back to the normal account if those aren't configured.
++     */
++    public static function recurring(): self
++    {
++        $instance = new self();
++        return $instance->forMerchant($instance->recMerchantId);
++    }
++
++    /**
++     * Same service, switched to whichever of our two Fiuu accounts owns
++     * $merchantId (the `domain` Fiuu sends back, or the merchant ID a
++     * stored token was created under). Unknown/empty -> normal account.
++     */
++    public function forMerchant(?string $merchantId): self
++    {
++        $clone = clone $this;
++        if ($merchantId && $this->recMerchantId && $merchantId === $this->recMerchantId
++            && $this->recVerifyKey && $this->recSecretKey) {
++            $clone->merchantId = $this->recMerchantId;
++            $clone->subMerchantId = null;
++            $clone->verifyKey = $this->recVerifyKey;
++            $clone->secretKey = $this->recSecretKey;
++        }
++        return $clone;
++    }
++
++    public function getMerchantId(): ?string
++    {
++        return $this->merchantId;
++    }
++
++    /**
++     * Charge a stored card token (Fiuu Recurring API v7, RecordType "T",
++     * merchant-initiated). Request format and checksum per Fiuu's
++     * "Recurring API Specification v7.1.4":
++     *   T|MerchantID|SubMerchant|Token|OrderID|Currency|Amount|Name|Email|Mobile|Desc|Checksum|CustomerId
++     *   Checksum = md5(RecordType . MerchantID . SubMerchant . Token . OrderID . Currency . Amount . VerifyKey)
++     *
++     * IMPORTANT: an 'accepted' reply only means Fiuu accepted the
++     * request. The actual result (00 paid / 11 failed / 22 pending) is
++     * POSTed later to the merchant Callback URL — see
++     * SubscriptionRenewalService::handleFiuuCallback(). Never treat
++     * 'accepted' as paid.
++     *
++     * @return array{accepted: bool, tran_id: ?string, reason: ?string, raw: mixed}
++     */
++    public function chargeToken(string $token, string $orderRef, $amount, ?string $name, ?string $email, ?string $phone, ?string $customerId = null, string $description = 'AutoMaid Subscription'): array
++    {
++        $amount = number_format((float) $amount, 2, '.', '');
++        $sub = '';
++        $clean = fn ($v) => str_replace('|', ' ', (string) $v); // '|' is the field separator
++        $checksum = md5('T' . $this->merchantId . $sub . $token . $orderRef . 'MYR' . $amount . $this->verifyKey);
++
++        $dataString = implode('|', [
++            'T', $this->merchantId, $sub, $token, $orderRef, 'MYR', $amount,
++            $clean($name), $clean($email), $clean($phone), $clean($description),
++            $checksum, $clean($customerId),
++        ]);
++
++        $url = rtrim($this->recBaseUrl ?: 'https://pay.fiuu.com', '/') . '/RMS/API/Recurring/input_v7.php';
++        try {
++            $resp = Http::asForm()->timeout(30)->post($url, ['0' => $dataString]);
++            $json = $resp->json();
++        } catch (\Throwable $e) {
++            return ['accepted' => false, 'tran_id' => null, 'reason' => 'Could not reach Fiuu: ' . $e->getMessage(), 'raw' => null];
++        }
++
++        $first = is_array($json) ? ($json[0] ?? $json) : null;
++        $accepted = is_array($first) && ($first['status'] ?? null) === 'accepted';
++
++        return [
++            'accepted' => $accepted,
++            'tran_id' => is_array($first) ? (isset($first['tranID']) ? (string) $first['tranID'] : null) : null,
++            'reason' => is_array($first) ? ($first['reason'] ?? null) : 'Unexpected response',
++            'raw' => $json ?? $resp->body(),
++        ];
++    }
++
++    /**
++     * Verify the skey on a recurring-result callback. Fiuu's recurring
++     * spec sample signs with the Verify Key, while normal payment
++     * callbacks sign with the Secret Key — accept either (both are
++     * private to us), using the keys of the account named in `domain`.
++     */
++    public function verifyRecurringCallback(array $data): bool
++    {
++        $svc = $this->forMerchant($data['domain'] ?? null);
++        $key0 = md5(($data['tranID'] ?? '') . ($data['orderid'] ?? '') . ($data['status'] ?? '') . ($data['domain'] ?? '') . ($data['amount'] ?? '') . ($data['currency'] ?? ''));
++        $base = ($data['paydate'] ?? '') . ($data['domain'] ?? '') . $key0 . ($data['appcode'] ?? '');
++        $skey = (string) ($data['skey'] ?? '');
++        return $skey !== ''
++            && (hash_equals(md5($base . $svc->verifyKey), $skey) || hash_equals(md5($base . $svc->secretKey), $skey));
++    }
++
+     /**
+      * [make description]
+      * @param  [type] $baseUrl    [description]
+@@ -168,7 +270,10 @@ public function getPaymentRequest2($order, $token)
+      */
+     public function checkVerifySignature(array $data)
+     {
+-        $rms = new Payment($this->merchantId, $this->verifyKey, $this->secretKey, $this->environment);      
++        // Subscription payments run on the recurring account, so verify
++        // with the keys of whichever account Fiuu says sent this.
++        $svc = $this->forMerchant($data['domain'] ?? null);
++        $rms = new Payment($svc->merchantId, $svc->verifyKey, $svc->secretKey, $this->environment);      
+         $key = md5($data['tranID'] . $data['orderid'] . $data['status'] . $data['domain'] . $data['amount'] . $data['currency']);
+         return $rms->verifySignature($data['paydate'], $data['domain'], $key, $data['appcode'], $data['skey']);
+     }
+diff --git a/app/Services/PaymentGateway/PaymentGatewayResolver.php b/app/Services/PaymentGateway/PaymentGatewayResolver.php
+index f9c9655..94765d4 100644
+--- a/app/Services/PaymentGateway/PaymentGatewayResolver.php
++++ b/app/Services/PaymentGateway/PaymentGatewayResolver.php
+@@ -26,4 +26,17 @@ public function resolve(?string $gatewayCode): PaymentGatewayInterface
+             default => app(FiuuPaymentService::class),
+         };
+     }
++
++    /**
++     * Same as resolve(), but for subscription payments (sign-up, upgrade
++     * top-up, card update). On Fiuu these run on the recurring merchant
++     * account (RECURRING_MERCHANT_ID) so the card token Fiuu returns can
++     * later be charged monthly by that same account.
++     */
++    public function resolveForSubscription(?string $gatewayCode): PaymentGatewayInterface
++    {
++        return $gatewayCode === self::GKASH
++            ? app(GkashPaymentService::class)
++            : FiuuPaymentService::recurring();
++    }
+ }
+diff --git a/app/Services/SubscriptionRenewalService.php b/app/Services/SubscriptionRenewalService.php
+new file mode 100644
+index 0000000..dd7ecd7
+--- /dev/null
++++ b/app/Services/SubscriptionRenewalService.php
+@@ -0,0 +1,325 @@
++<?php
++
++namespace App\Services;
++
++use App\Mail\RenewalSubscriptionEmail;
++use App\Models\Activity;
++use App\Models\CustomerNotification;
++use App\Models\PaymentRecurring;
++use App\Models\Setting;
++use App\Models\Subscription;
++use App\Models\SubscriptionRenewalCharge;
++use App\Models\Transaction;
++use App\Services\PaymentGateway\FiuuPaymentService;
++use Carbon\Carbon;
++use Illuminate\Support\Facades\DB;
++use Illuminate\Support\Facades\Log;
++
++/**
++ * Monthly Fiuu subscription renewal, in two halves:
++ *
++ *  1. chargeFiuu()         — nightly job sends a token charge (unique OrderID
++ *                            "SR..." per attempt, current plan price) and
++ *                            records it as ACCEPTED. Nothing is extended yet.
++ *  2. handleFiuuCallback() — Fiuu POSTs the real result to our callback URL.
++ *                            Only status 00 extends the subscription; 11
++ *                            records a failure (retried next night, up to
++ *                            SubscriptionRenewalCharge::MAX_ATTEMPTS).
++ */
++class SubscriptionRenewalService
++{
++    /** An accepted charge with no callback after this long is treated as failed. */
++    const STALE_ACCEPTED_HOURS = 48;
++
++    /**
++     * @return array{action: string, message: string, charge_id?: int}
++     */
++    public function chargeFiuu(PaymentRecurring $recurring, bool $dryRun = false): array
++    {
++        $subscription = $recurring->subscription;
++        $order = $recurring->payment?->order;
++        $user = $order?->user;
++        if (!$subscription || !$order || !$user || !$recurring->token) {
++            return ['action' => 'skipped', 'message' => 'Missing subscription, order, user or token.'];
++        }
++
++        $cycle = Carbon::parse($recurring->next_payment_date)->toDateString();
++        $charges = SubscriptionRenewalCharge::where('subscription_id', $subscription->id)
++            ->whereDate('cycle_date', $cycle)->get();
++
++        if ($charges->contains('status', SubscriptionRenewalCharge::PAID)) {
++            return ['action' => 'skipped', 'message' => "Cycle {$cycle} already paid."];
++        }
++
++        // Waiting on Fiuu's callback for an earlier attempt? Don't charge again —
++        // unless it has been silent for too long, in which case count it as failed.
++        foreach ($charges->whereIn('status', [SubscriptionRenewalCharge::ACCEPTED, SubscriptionRenewalCharge::PENDING]) as $open) {
++            if ($open->created_at->gt(now()->subHours(self::STALE_ACCEPTED_HOURS))) {
++                return ['action' => 'skipped', 'message' => "Waiting for Fiuu's result on {$open->reference}."];
++            }
++            if (!$dryRun) {
++                $this->markFailed($open, 'No result received from Fiuu within ' . self::STALE_ACCEPTED_HOURS . ' hours.', null, false);
++            }
++        }
++
++        $failed = SubscriptionRenewalCharge::where('subscription_id', $subscription->id)
++            ->whereDate('cycle_date', $cycle)->where('status', SubscriptionRenewalCharge::FAILED)->count();
++        if ($failed >= SubscriptionRenewalCharge::MAX_ATTEMPTS) {
++            return ['action' => 'skipped', 'message' => "Gave up on cycle {$cycle} after {$failed} failed attempts."];
++        }
++
++        // Current plan price (so an upgrade is billed at the new price), not
++        // the original sign-up order's amount.
++        $setting = Setting::find(1);
++        $amount = $setting ? $subscription->planPrice($setting) : 0;
++        if ($amount < 1) {
++            $amount = (float) $order->grand_total; // fallback; Fiuu minimum is above RM1.00
++        }
++
++        $attempt = $failed + 1;
++        $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
++        $fiuu = (new FiuuPaymentService())->forMerchant($recurring->merchant_id);
++
++        if ($dryRun) {
++            return ['action' => 'dry-run', 'message' => sprintf(
++                'Would charge RM%s (%s plan) on Fiuu account %s, reference %s, token ****%s.',
++                number_format($amount, 2), $subscription->plan_code ?? '-', $fiuu->getMerchantId(), $reference, substr($recurring->token, -4)
++            )];
++        }
++
++        $charge = SubscriptionRenewalCharge::create([
++            'subscription_id' => $subscription->id,
++            'payment_recurring_id' => $recurring->id,
++            'order_id' => $order->id,
++            'gateway' => 'fiuu',
++            'merchant_id' => $fiuu->getMerchantId(),
++            'reference' => $reference,
++            'cycle_date' => $cycle,
++            'attempt' => $attempt,
++            'plan_code' => $subscription->plan_code,
++            'amount' => $amount,
++            'status' => SubscriptionRenewalCharge::PENDING,
++        ]);
++
++        $result = $fiuu->chargeToken(
++            $recurring->token,
++            $reference,
++            $amount,
++            $order->billing_name ?: $user->name,
++            $order->billing_email ?: $user->email,
++            $order->billing_phone ?: $user->mobile_no,
++            (string) $user->id,
++            'AutoMaid ' . ucfirst((string) $subscription->plan_code) . ' subscription',
++        );
++
++        $charge->request_response = json_encode($result['raw']);
++        $charge->tran_id = $result['tran_id'];
++
++        if ($result['accepted']) {
++            $charge->status = SubscriptionRenewalCharge::ACCEPTED;
++            $charge->save();
++            Log::info('Fiuu renewal charge accepted, waiting for callback', ['reference' => $reference, 'tran_id' => $result['tran_id']]);
++            return ['action' => 'accepted', 'message' => "Charge {$reference} accepted by Fiuu; waiting for result.", 'charge_id' => $charge->id];
++        }
++
++        $charge->save();
++        $this->markFailed($charge, $result['reason'] ?: 'Rejected by Fiuu');
++        return ['action' => 'failed', 'message' => "Charge {$reference} rejected: " . ($result['reason'] ?: 'unknown'), 'charge_id' => $charge->id];
++    }
++
++    /**
++     * Fiuu's recurring result callback (nbcb=1). Returns the body Fiuu
++     * expects back. Safe to receive more than once.
++     */
++    public function handleFiuuCallback(array $data): string
++    {
++        $ack = 'CBTOKEN:MPSTATOK';
++        $reference = $data['orderid'] ?? null;
++
++        if (!(new FiuuPaymentService())->verifyRecurringCallback($data)) {
++            Log::warning('Fiuu renewal callback: invalid signature, ignored', ['orderid' => $reference]);
++            return $ack;
++        }
++
++        $charge = SubscriptionRenewalCharge::where('reference', $reference)->first();
++        if (!$charge) {
++            Log::warning('Fiuu renewal callback: unknown reference', ['orderid' => $reference]);
++            return $ack;
++        }
++
++        if ($charge->status === SubscriptionRenewalCharge::PAID) {
++            return $ack; // duplicate callback
++        }
++
++        $charge->callback_data = json_encode($data);
++        $charge->tran_id = $data['tranID'] ?? $charge->tran_id;
++        $status = (string) ($data['status'] ?? '');
++
++        if ($status === '00') {
++            if (number_format((float) ($data['amount'] ?? 0), 2, '.', '') !== number_format((float) $charge->amount, 2, '.', '')) {
++                Log::error('Fiuu renewal callback: amount differs from what we charged', ['reference' => $reference, 'charged' => $charge->amount, 'callback' => $data['amount'] ?? null]);
++            }
++            $this->markPaid($charge, $data);
++        } elseif ($status === '22') {
++            $charge->save(); // still pending at the bank; wait for the next callback
++        } else {
++            $charge->save();
++            $reason = trim(($data['error_code'] ?? '') . ' ' . ($data['error_desc'] ?? '')) ?: 'Card charge failed';
++            $this->markFailed($charge, $reason, $data);
++        }
++
++        return $ack;
++    }
++
++    protected function markPaid(SubscriptionRenewalCharge $charge, array $data): void
++    {
++        DB::transaction(function () use ($charge, $data) {
++            $recurring = $charge->paymentRecurring;
++            $subscription = $charge->subscription;
++            $payment = $recurring?->payment;
++            $order = $payment?->order;
++
++            $charge->status = SubscriptionRenewalCharge::PAID;
++            $charge->result_at = now();
++            $charge->save();
++
++            if (!$recurring || !$subscription || !$order) {
++                Log::error('Fiuu renewal paid but subscription records are missing', ['charge_id' => $charge->id]);
++                return;
++            }
++
++            $transaction = Transaction::firstOrCreate(
++                [
++                    'order_id' => $order->id,
++                    'payment_id' => $payment->id,
++                    'type' => Transaction::SUBSCRIPTION_RENEWAL,
++                    'date' => now()->toDateString(),
++                ],
++                ['amount' => $charge->amount, 'status' => Transaction::PAID]
++            );
++
++            // Anchored on the billing date, not "today", so a retry a day
++            // late doesn't shift the customer's billing date.
++            $next = Carbon::parse($charge->cycle_date)->addMonth();
++
++            PaymentRecurring::firstOrCreate(
++                [
++                    'payment_id' => $recurring->payment_id,
++                    'subscription_id' => $subscription->id,
++                    'transaction_id' => $transaction->id,
++                ],
++                [
++                    'token' => $recurring->token,
++                    'merchant_id' => $recurring->merchant_id,
++                    'payment_date' => now()->toDateString(),
++                    'next_payment_date' => $next->toDateString(),
++                    'status' => PaymentRecurring::SUBSCRIPTION_RENEWAL,
++                    'status_payment' => PaymentRecurring::PAID,
++                    'data' => json_encode($data),
++                    'amount' => $charge->amount,
++                    'is_paid' => true,
++                    'paid_at' => now(),
++                    'cc_brand' => $recurring->cc_brand,
++                    'cc_last_four' => $recurring->cc_last_four,
++                    'cc_type' => $recurring->cc_type,
++                ]
++            );
++
++            $recurring->status_payment = PaymentRecurring::COMPLETE;
++            $recurring->save();
++
++            $subscription->status = Subscription::ACTIVE;
++            $subscription->end_date = $next;
++            $subscription->renew_at = $next;
++            $subscription->orders_used_current_cycle = 0;
++            $subscription->save();
++
++            Activity::firstOrCreate([
++                'order_id' => $order->id,
++                'user_id' => $order->user_id,
++                'transaction_id' => $transaction->id,
++                'user_type' => 'customer',
++                'title' => 'Subscription Renewal',
++                'status' => Activity::ACTIVE,
++            ]);
++
++            DB::afterCommit(function () use ($order, $charge, $next) {
++                $user = $order->user;
++                $subject = 'Auto Maid: Your subscription renewal is successful';
++                try {
++                    $html = (new RenewalSubscriptionEmail($user->name, $subject, $order))->render();
++                } catch (\Throwable $e) {
++                    $html = '<p>Hi ' . e($user->name) . ',</p><p>Your AutoMaid subscription has been renewed (RM' . number_format($charge->amount, 2) . ').</p>';
++                }
++                (new OneSignalService())->notifyUser(
++                    $user,
++                    CustomerNotification::SUBSCRIPTION_RENEWED,
++                    $subject,
++                    'Your subscription has been renewed until ' . $next->format('j M Y') . '.',
++                    $html,
++                    $order->id,
++                );
++            });
++        });
++
++        Log::info('Fiuu renewal paid', ['reference' => $charge->reference, 'tran_id' => $charge->tran_id]);
++    }
++
++    protected function markFailed(SubscriptionRenewalCharge $charge, string $reason, ?array $data = null, bool $notify = true): void
++    {
++        $charge->status = SubscriptionRenewalCharge::FAILED;
++        $charge->reason = mb_substr($reason, 0, 300);
++        $charge->result_at = now();
++        if ($data) {
++            $charge->callback_data = json_encode($data);
++        }
++        $charge->save();
++
++        $failed = SubscriptionRenewalCharge::where('subscription_id', $charge->subscription_id)
++            ->whereDate('cycle_date', $charge->cycle_date)->where('status', SubscriptionRenewalCharge::FAILED)->count();
++        $finalAttempt = $failed >= SubscriptionRenewalCharge::MAX_ATTEMPTS;
++
++        Log::warning('Fiuu renewal failed', ['reference' => $charge->reference, 'reason' => $reason, 'attempt' => $failed, 'final' => $finalAttempt]);
++
++        $subscription = $charge->subscription;
++        if ($finalAttempt) {
++            // Stop the nightly job retrying this token; benefits already
++            // stopped when the paid period ended.
++            if ($charge->paymentRecurring) {
++                $charge->paymentRecurring->status = PaymentRecurring::INACTIVE;
++                $charge->paymentRecurring->save();
++            }
++            if ($subscription) {
++                $subscription->status = Subscription::INACTIVE;
++                $subscription->save();
++            }
++        }
++
++        $user = $subscription?->user;
++        if (!$notify || !$user) {
++            return;
++        }
++
++        $amount = 'RM' . number_format($charge->amount, 2);
++        if ($finalAttempt) {
++            $subject = 'Auto Maid: Your subscription could not be renewed';
++            $body = "We couldn't charge {$amount} to your card after {$failed} attempts, so your subscription has ended. You can subscribe again anytime in the app.";
++        } else {
++            $subject = 'Auto Maid: Subscription payment failed';
++            $body = "We couldn't charge {$amount} to your card for your subscription renewal. We'll try again tomorrow (attempt {$failed} of " . SubscriptionRenewalCharge::MAX_ATTEMPTS . "). Please make sure your card can be charged.";
++        }
++
++        try {
++            (new OneSignalService())->notifyUser(
++                $user,
++                CustomerNotification::SUBSCRIPTION_RENEWAL_FAILED,
++                $subject,
++                $body,
++                '<p>Hi ' . e($user->name) . ',</p><p>' . e($body) . '</p><p>— AutoMaid</p>',
++                $charge->order_id,
++            );
++        } catch (\Throwable $e) {
++            Log::error('Could not notify customer of failed renewal', ['charge_id' => $charge->id, 'error' => $e->getMessage()]);
++        }
++    }
++}
+diff --git a/database/migrations/2026_10_02_090000_create_subscription_renewal_charges_table.php b/database/migrations/2026_10_02_090000_create_subscription_renewal_charges_table.php
+new file mode 100644
+index 0000000..2f6d940
+--- /dev/null
++++ b/database/migrations/2026_10_02_090000_create_subscription_renewal_charges_table.php
+@@ -0,0 +1,63 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * One row per monthly charge attempt on a stored card token.
++ *
++ * Fiuu's recurring API only *accepts* a charge request; the real result
++ * arrives later on the callback URL. This table is what ties that
++ * callback (matched on `reference`, the unique OrderID we sent) back to
++ * the subscription, and what stops the nightly job from charging twice.
++ *
++ * Also records which Fiuu merchant ID created each stored token
++ * (payment_recurrings.merchant_id) — a token can only be charged by the
++ * account that created it. Existing rows stay NULL = the normal account.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        if (!Schema::hasTable('subscription_renewal_charges')) {
++            Schema::create('subscription_renewal_charges', function (Blueprint $table) {
++                $table->id();
++                $table->unsignedInteger('subscription_id')->index();
++                $table->unsignedInteger('payment_recurring_id')->index()->nullable();
++                $table->unsignedInteger('order_id')->index()->nullable(); // original subscription order
++                $table->string('gateway', 20)->default('fiuu');
++                $table->string('merchant_id', 100)->nullable();
++                $table->string('reference', 32)->unique(); // OrderID sent to Fiuu, e.g. SR123-20261102-1
++                $table->date('cycle_date')->index();        // the next_payment_date this charge is for
++                $table->unsignedTinyInteger('attempt')->default(1);
++                $table->string('plan_code', 20)->nullable();
++                $table->decimal('amount', 18, 2);
++                // pending -> accepted (waiting for callback) -> paid | failed
++                $table->string('status', 20)->default('pending')->index();
++                $table->string('tran_id', 50)->nullable();
++                $table->string('reason', 300)->nullable();
++                $table->text('request_response')->nullable();
++                $table->text('callback_data')->nullable();
++                $table->timestamp('result_at')->nullable();
++                $table->timestamps();
++            });
++        }
++
++        if (!Schema::hasColumn('payment_recurrings', 'merchant_id')) {
++            Schema::table('payment_recurrings', function (Blueprint $table) {
++                $table->string('merchant_id', 100)->nullable()->after('token');
++            });
++        }
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('subscription_renewal_charges');
++        if (Schema::hasColumn('payment_recurrings', 'merchant_id')) {
++            Schema::table('payment_recurrings', function (Blueprint $table) {
++                $table->dropColumn('merchant_id');
++            });
++        }
++    }
++};
+diff --git a/routes/web.php b/routes/web.php
+index bf134a1..b4775f5 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -30,7 +30,6 @@
+     Route::post('/fiuu/return', [FiuuController::class, 'getReturn'])->name('fiuu.return');
+     Route::post('/fiuu/notification', [FiuuController::class, 'getNotification'])->name('fiuu.notification');
+     Route::post('/fiuu/callback', [FiuuController::class, 'getCallback'])->name('fiuu.callback');
+-    Route::post('/fiuu/test', [FiuuController::class, 'getTest'])->name('fiuu.test');
+ 
+     Route::post('/gkash/return', [GkashController::class, 'getReturn'])->name('gkash.return');
+     Route::post('/gkash/notification', [GkashController::class, 'getNotification'])->name('gkash.notification');

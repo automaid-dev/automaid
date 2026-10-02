@@ -25,6 +25,8 @@ class CustomerNotification extends Model
     const BAG_PURCHASED = 'bag_purchased';
     const SUBSCRIPTION_CREATED = 'subscription_created';
     const SUBSCRIPTION_CANCELLED = 'subscription_cancelled';
+    const SUBSCRIPTION_RENEWED = 'subscription_renewed';
+    const SUBSCRIPTION_RENEWAL_FAILED = 'subscription_renewal_failed';
     const NEW_BOOKING = 'new_booking';
     const RIDER_ACCEPTED = 'rider_accepted';
     const RIDER_ON_THE_WAY_TO_DELIVER = 'rider_on_the_way_to_deliver';

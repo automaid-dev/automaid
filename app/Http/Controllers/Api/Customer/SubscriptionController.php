@@ -185,7 +185,7 @@ class SubscriptionController extends Controller
             $order->save();
 
             // create payment
-            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($gatewayCode);
+            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($gatewayCode);
             $paymentUrl = $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
@@ -364,7 +364,7 @@ class SubscriptionController extends Controller
             $order->payment_gateway = $subscription->payment_gateway;
             $order->save();
 
-            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
+            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
             $paymentUrl = $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,
@@ -491,7 +491,7 @@ class SubscriptionController extends Controller
             $order->payment_gateway = $subscription->payment_gateway;
             $order->save();
 
-            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolve($subscription->payment_gateway);
+            $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
             $paymentUrl = $rms->createPaymentUrl([
                 'amount' => $order->grand_total,
                 'orderid' => $order->id,

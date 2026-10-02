@@ -27,7 +27,7 @@ class CheckNextPaymentSubscription extends Command
      *
      * @var string
      */
-    protected $description = 'Command description';
+    protected $description = 'Charge subscriptions whose next payment date has arrived (Fiuu: result confirmed by callback)';
 
     /**
      * Execute the console command.
@@ -62,6 +62,23 @@ class CheckNextPaymentSubscription extends Command
 
                 // get subscription info
                 $subscription = $recurring->subscription;
+
+                // Fiuu: charge request only — the subscription is extended
+                // when Fiuu's callback confirms payment (see
+                // SubscriptionRenewalService). The old inline flow below
+                // treated Fiuu's "accepted" as "paid", reused the same
+                // OrderID every month and billed the original sign-up
+                // amount even after an upgrade.
+                if ($subscription->payment_gateway !== 'gkash') {
+                    try {
+                        $result = (new \App\Services\SubscriptionRenewalService())->chargeFiuu($recurring);
+                        $this->line("Subscription #{$subscription->id}: [{$result['action']}] {$result['message']}");
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::error('Fiuu renewal charge crashed', ['subscription_id' => $subscription->id, 'error' => $e->getMessage()]);
+                        $this->error("Subscription #{$subscription->id}: " . $e->getMessage());
+                    }
+                    continue;
+                }
 
                 // get payment info
                 $payment = $recurring->payment;

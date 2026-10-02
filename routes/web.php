@@ -30,7 +30,6 @@ Route::group([
     Route::post('/fiuu/return', [FiuuController::class, 'getReturn'])->name('fiuu.return');
     Route::post('/fiuu/notification', [FiuuController::class, 'getNotification'])->name('fiuu.notification');
     Route::post('/fiuu/callback', [FiuuController::class, 'getCallback'])->name('fiuu.callback');
-    Route::post('/fiuu/test', [FiuuController::class, 'getTest'])->name('fiuu.test');
 
     Route::post('/gkash/return', [GkashController::class, 'getReturn'])->name('gkash.return');
     Route::post('/gkash/notification', [GkashController::class, 'getNotification'])->name('gkash.notification');

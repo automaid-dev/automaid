@@ -1,0 +1,186 @@
+diff --git a/app/Http/Controllers/Payment/FiuuCardCheckoutController.php b/app/Http/Controllers/Payment/FiuuCardCheckoutController.php
+new file mode 100644
+index 0000000..bc8dd5d
+--- /dev/null
++++ b/app/Http/Controllers/Payment/FiuuCardCheckoutController.php
+@@ -0,0 +1,50 @@
++<?php
++
++namespace App\Http\Controllers\Payment;
++
++use App\Http\Controllers\Controller;
++use App\Models\Order;
++use App\Services\PaymentGateway\FiuuPaymentService;
++
++/**
++ * GET /payment/fiuu/card/{order} (signed, expiring link) — opened in the
++ * app's payment WebView for subscription card payments. Auto-posts to
++ * Fiuu's seamless card form so the customer lands straight on "add card"
++ * instead of Fiuu's channel list.
++ *
++ * Deliberately NOT under /webhook/: the app treats any /webhook/fiuu/
++ * URL as "payment finished".
++ */
++class FiuuCardCheckoutController extends Controller
++{
++    const SUBSCRIPTION_TYPES = [
++        Order::SUBSCRIPTION,
++        Order::SUBSCRIPTION_UPGRADE,
++        Order::SUBSCRIPTION_UPDATE,
++    ];
++
++    public function show(Order $order)
++    {
++        if ($order->status !== Order::PENDING || !in_array($order->order_type, self::SUBSCRIPTION_TYPES, true)) {
++            return response()->view('payment.return', [
++                'success' => false,
++                'title' => 'Payment link expired',
++                'message' => 'This payment has already been completed or cancelled. Please return to the app.',
++            ], 410);
++        }
++
++        $description = match ($order->order_type) {
++            Order::SUBSCRIPTION_UPGRADE => 'Subscription upgrade',
++            Order::SUBSCRIPTION_UPDATE => 'Subscription card update',
++            default => 'Subscription',
++        };
++
++        $form = FiuuPaymentService::recurring()->seamlessCardForm($order, $description);
++
++        return view('payment.fiuu-card', [
++            'action' => $form['action'],
++            'fields' => $form['fields'],
++            'amount' => $form['fields']['mpsamount'],
++        ]);
++    }
++}
+diff --git a/app/Services/PaymentGateway/FiuuPaymentService.php b/app/Services/PaymentGateway/FiuuPaymentService.php
+index ce7a7c0..1590b6a 100644
+--- a/app/Services/PaymentGateway/FiuuPaymentService.php
++++ b/app/Services/PaymentGateway/FiuuPaymentService.php
+@@ -98,6 +98,48 @@ public function getMerchantId(): ?string
+         return $this->merchantId;
+     }
+ 
++    public function isRecurringAccount(): bool
++    {
++        return $this->recMerchantId && $this->merchantId === $this->recMerchantId;
++    }
++
++    /**
++     * Form for Fiuu's seamless card page (opens the card form directly,
++     * no channel list), built entirely server-side from the Order so the
++     * verify key never reaches the browser. mpstokenstatus=1 asks Fiuu
++     * to tokenise the card so the monthly renewal can charge it.
++     *
++     * @return array{action: string, fields: array<string, string>}
++     */
++    public function seamlessCardForm(Order $order, string $description = 'Subscription'): array
++    {
++        $amount = number_format((float) $order->grand_total, 2, '.', '');
++        $orderId = (string) $order->id;
++        $host = $this->environment === 'sandbox' ? 'https://sandbox-payment.fiuu.com' : 'https://pay.fiuu.com';
++
++        return [
++            'action' => $host . '/MOLPay/API/seamless/index.php',
++            'fields' => [
++                'mpsmerchantid' => (string) $this->merchantId,
++                'mpschannel' => 'credit',
++                'mpsamount' => $amount,
++                'mpsorderid' => $orderId,
++                'mpsbill_name' => (string) ($order->billing_name ?: $order->user?->name),
++                'mpsbill_email' => (string) ($order->billing_email ?: $order->user?->email),
++                'mpsbill_mobile' => (string) ($order->billing_phone ?: $order->user?->mobile_no),
++                'mpsbill_desc' => $description,
++                'mpscountry' => 'MY',
++                'mpscurrency' => 'MYR',
++                'mpslangcode' => 'en',
++                'mpsvcode' => md5($amount . $this->merchantId . $orderId . $this->verifyKey),
++                'mpstokenstatus' => '1',
++                'mpsreturnurl' => route('webhook.fiuu.return'),
++                'mpsnotifyurl' => route('webhook.fiuu.notification'),
++                'mpscallbackurl' => route('webhook.fiuu.callback'),
++            ],
++        ];
++    }
++
+     /**
+      * Charge a stored card token (Fiuu Recurring API v7, RecordType "T",
+      * merchant-initiated). Request format and checksum per Fiuu's
+@@ -183,6 +225,23 @@ public static function make($baseUrl = null, $merchantId = null, $subMerchantId
+      */
+     public function getPaymentUrl(array $data)
+     {
++        // Subscription card payments (recurring account, channel
++        // "credit"): Fiuu's hosted page always shows the channel list,
++        // even with channel=credit. Send the customer to our own small
++        // page instead, which posts straight to Fiuu's seamless card
++        // form (see seamlessCardForm()). Signed + expiring link.
++        if (($data['channel'] ?? null) === 'credit' && $this->isRecurringAccount()) {
++            // Signature covers the path only ("signed:relative"), so it
++            // still validates behind Cloudflare/proxies that change the
++            // scheme or host the app server sees.
++            return url(\Illuminate\Support\Facades\URL::temporarySignedRoute(
++                'payment.fiuu.card',
++                now()->addMinutes(60),
++                ['order' => $data['orderid']],
++                false
++            ));
++        }
++
+         $rms = new Payment($this->merchantId, $this->verifyKey, $this->secretKey, $this->environment);
+ 
+         // THE FIX: returnUrl/callbackurl were never being passed to Fiuu
+diff --git a/resources/views/payment/fiuu-card.blade.php b/resources/views/payment/fiuu-card.blade.php
+new file mode 100644
+index 0000000..ad919c9
+--- /dev/null
++++ b/resources/views/payment/fiuu-card.blade.php
+@@ -0,0 +1,29 @@
++<!doctype html>
++<html lang="en">
++<head>
++    <meta charset="utf-8">
++    <meta name="viewport" content="width=device-width, initial-scale=1">
++    <title>Card payment</title>
++    <style>
++        body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 48px 24px; text-align: center; color: #333; }
++        .spinner { width: 36px; height: 36px; margin: 0 auto 16px; border: 4px solid #e3e8ef; border-top-color: #1565C0; border-radius: 50%; animation: spin 0.8s linear infinite; }
++        @keyframes spin { to { transform: rotate(360deg); } }
++        button { margin-top: 20px; padding: 12px 24px; font-size: 16px; border: 0; border-radius: 8px; background: #1565C0; color: #fff; }
++        small { color: #777; }
++    </style>
++</head>
++<body>
++    <div class="spinner"></div>
++    <p>Opening secure card payment (RM{{ $amount }})…</p>
++    <small>Powered by Fiuu. Your card details are entered on Fiuu's page, not stored by AutoMaid.</small>
++
++    <form id="fiuu-card" method="POST" action="{{ $action }}">
++        @foreach ($fields as $name => $value)
++            <input type="hidden" name="{{ $name }}" value="{{ $value }}">
++        @endforeach
++        <noscript><button type="submit">Continue to card payment</button></noscript>
++    </form>
++
++    <script>document.getElementById('fiuu-card').submit();</script>
++</body>
++</html>
+diff --git a/routes/web.php b/routes/web.php
+index b4775f5..6ef867e 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -36,6 +36,13 @@
+     Route::get('/gkash/checkout-form/{orderid}', [GkashController::class, 'getCheckoutForm'])->name('gkash.checkout-form');
+ });
+ 
++// Subscription card checkout: auto-posts to Fiuu's seamless card form
++// (skips Fiuu's channel list). Signed, expiring links only. Not under
++// /webhook/ on purpose — the app treats /webhook/fiuu/ as "finished".
++Route::get('/payment/fiuu/card/{order}', [\App\Http\Controllers\Payment\FiuuCardCheckoutController::class, 'show'])
++    ->middleware('signed:relative')
++    ->name('payment.fiuu.card');
++
+ Route::get('/qrcode/print/{series_no}', function ($series_no) {
+     $record = Qrcode::where('series_no', $series_no)->firstOrFail();
+     return view('qr-modal', [

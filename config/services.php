@@ -114,6 +114,11 @@ return [
 
     'recurring' => [
         'rec_base_url' => env('RECURRING_BASE_URL', 'https://pay.fiuu.com'),
+        // 'production' or 'sandbox' for the recurring account's hosted
+        // payment page (sign-up checkout). Independent of FIUU_ENVIRONMENT,
+        // which only applies to the normal Fiuu account. If unset, follows
+        // RECURRING_BASE_URL (a "sandbox" host = sandbox, else production).
+        'rec_environment' => env('RECURRING_ENVIRONMENT'),
         'rec_merchant_id' => env('RECURRING_MERCHANT_ID', 'paynwashsolutions_Dev'),
         'rec_verify_key' => env('RECURRING_VERIFY_KEY', '510533bdc88f6f68f219f32aa465d533'),
         'rec_secret_key' => env('RECURRING_SECRET_KEY', '9321d6ed1d1d8534156061aff3075a69'),  

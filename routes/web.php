@@ -36,6 +36,13 @@ Route::group([
     Route::get('/gkash/checkout-form/{orderid}', [GkashController::class, 'getCheckoutForm'])->name('gkash.checkout-form');
 });
 
+// Subscription card checkout: auto-posts to Fiuu's seamless card form
+// (skips Fiuu's channel list). Signed, expiring links only. Not under
+// /webhook/ on purpose — the app treats /webhook/fiuu/ as "finished".
+Route::get('/payment/fiuu/card/{order}', [\App\Http\Controllers\Payment\FiuuCardCheckoutController::class, 'show'])
+    ->middleware('signed:relative')
+    ->name('payment.fiuu.card');
+
 Route::get('/qrcode/print/{series_no}', function ($series_no) {
     $record = Qrcode::where('series_no', $series_no)->firstOrFail();
     return view('qr-modal', [

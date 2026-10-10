@@ -75,13 +75,69 @@ class FiuuPaymentService implements PaymentGatewayInterface
             $clone->subMerchantId = null;
             $clone->verifyKey = $this->recVerifyKey;
             $clone->secretKey = $this->recSecretKey;
+            // The recurring account is live even while the normal account
+            // (FIUU_ENVIRONMENT) is still on sandbox — without this the
+            // sign-up page opened sandbox-payment.fiuu.com/RMS/pay/paynwash02,
+            // which doesn't exist on Fiuu's sandbox.
+            $clone->environment = self::recurringEnvironment($this->recBaseUrl);
         }
         return $clone;
+    }
+
+    protected static function recurringEnvironment(?string $recBaseUrl): string
+    {
+        $configured = strtolower((string) config('services.recurring.rec_environment'));
+        if (in_array($configured, ['sandbox', 'production'], true)) {
+            return $configured;
+        }
+        return str_contains(strtolower((string) $recBaseUrl), 'sandbox') ? 'sandbox' : 'production';
     }
 
     public function getMerchantId(): ?string
     {
         return $this->merchantId;
+    }
+
+    public function isRecurringAccount(): bool
+    {
+        return $this->recMerchantId && $this->merchantId === $this->recMerchantId;
+    }
+
+    /**
+     * Form for Fiuu's seamless card page (opens the card form directly,
+     * no channel list), built entirely server-side from the Order so the
+     * verify key never reaches the browser. mpstokenstatus=1 asks Fiuu
+     * to tokenise the card so the monthly renewal can charge it.
+     *
+     * @return array{action: string, fields: array<string, string>}
+     */
+    public function seamlessCardForm(Order $order, string $description = 'Subscription'): array
+    {
+        $amount = number_format((float) $order->grand_total, 2, '.', '');
+        $orderId = (string) $order->id;
+        $host = $this->environment === 'sandbox' ? 'https://sandbox-payment.fiuu.com' : 'https://pay.fiuu.com';
+
+        return [
+            'action' => $host . '/MOLPay/API/seamless/index.php',
+            'fields' => [
+                'mpsmerchantid' => (string) $this->merchantId,
+                'mpschannel' => 'credit',
+                'mpsamount' => $amount,
+                'mpsorderid' => $orderId,
+                'mpsbill_name' => (string) ($order->billing_name ?: $order->user?->name),
+                'mpsbill_email' => (string) ($order->billing_email ?: $order->user?->email),
+                'mpsbill_mobile' => (string) ($order->billing_phone ?: $order->user?->mobile_no),
+                'mpsbill_desc' => $description,
+                'mpscountry' => 'MY',
+                'mpscurrency' => 'MYR',
+                'mpslangcode' => 'en',
+                'mpsvcode' => md5($amount . $this->merchantId . $orderId . $this->verifyKey),
+                'mpstokenstatus' => '1',
+                'mpsreturnurl' => route('webhook.fiuu.return'),
+                'mpsnotifyurl' => route('webhook.fiuu.notification'),
+                'mpscallbackurl' => route('webhook.fiuu.callback'),
+            ],
+        ];
     }
 
     /**
@@ -169,6 +225,23 @@ class FiuuPaymentService implements PaymentGatewayInterface
      */
     public function getPaymentUrl(array $data)
     {
+        // Subscription card payments (recurring account, channel
+        // "credit"): Fiuu's hosted page always shows the channel list,
+        // even with channel=credit. Send the customer to our own small
+        // page instead, which posts straight to Fiuu's seamless card
+        // form (see seamlessCardForm()). Signed + expiring link.
+        if (($data['channel'] ?? null) === 'credit' && $this->isRecurringAccount()) {
+            // Signature covers the path only ("signed:relative"), so it
+            // still validates behind Cloudflare/proxies that change the
+            // scheme or host the app server sees.
+            return url(\Illuminate\Support\Facades\URL::temporarySignedRoute(
+                'payment.fiuu.card',
+                now()->addMinutes(60),
+                ['order' => $data['orderid']],
+                false
+            ));
+        }
+
         $rms = new Payment($this->merchantId, $this->verifyKey, $this->secretKey, $this->environment);
 
         // THE FIX: returnUrl/callbackurl were never being passed to Fiuu

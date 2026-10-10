@@ -11,12 +11,23 @@ use App\Models\Subscription;
 use App\Models\SubscriptionRenewalCharge;
 use App\Models\Transaction;
 use App\Services\PaymentGateway\FiuuPaymentService;
+use App\Services\PaymentGateway\GkashPaymentService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Monthly Fiuu subscription renewal, in two halves:
+ * Monthly subscription renewal on a stored card token.
+ *
+ * GKash (chargeGkash): the charge result normally comes straight back.
+ *   88 extends the subscription, 66 records a failure (retried next night,
+ *   up to MAX_ATTEMPTS, customer notified each time). 11 "Pending", a
+ *   timeout or an unreadable reply means the card MAY have been charged, so
+ *   the charge is left PENDING, admin is alerted, and the job will NOT
+ *   charge that cycle again until GKash's callback or an admin settles it
+ *   (php artisan automaid:gkash-test-renewal {id} --resolve=REF --as=paid|failed).
+ *
+ * Fiuu, in two halves:
  *
  *  1. chargeFiuu()         — nightly job sends a token charge (unique OrderID
  *                            "SR..." per attempt, current plan price) and
@@ -128,6 +139,177 @@ class SubscriptionRenewalService
     }
 
     /**
+     * GKash monthly charge for one due PaymentRecurring row.
+     *
+     * @return array{action: string, message: string, charge_id?: int}
+     */
+    public function chargeGkash(PaymentRecurring $recurring, bool $dryRun = false): array
+    {
+        $subscription = $recurring->subscription;
+        $order = $recurring->payment?->order;
+        $user = $order?->user;
+        if (!$subscription || !$order || !$user || !$recurring->token) {
+            return ['action' => 'skipped', 'message' => 'Missing subscription, order, user or card token.'];
+        }
+
+        $cycle = Carbon::parse($recurring->next_payment_date)->toDateString();
+        $charges = SubscriptionRenewalCharge::where('subscription_id', $subscription->id)
+            ->whereDate('cycle_date', $cycle)->get();
+
+        if ($charges->contains('status', SubscriptionRenewalCharge::PAID)) {
+            return ['action' => 'skipped', 'message' => "Cycle {$cycle} already paid."];
+        }
+
+        // An unsettled charge may already have taken the money — never
+        // charge the same cycle again until it is resolved.
+        $open = $charges->first(fn ($c) => in_array($c->status, [SubscriptionRenewalCharge::PENDING, SubscriptionRenewalCharge::ACCEPTED], true));
+        if ($open) {
+            return ['action' => 'skipped', 'message' => "Charge {$open->reference} is still pending at GKash (since {$open->created_at}). Check the GKash portal, then run: php artisan automaid:gkash-test-renewal {$subscription->id} --resolve={$open->reference} --as=paid|failed"];
+        }
+
+        $failed = $charges->where('status', SubscriptionRenewalCharge::FAILED)->count();
+        if ($failed >= SubscriptionRenewalCharge::MAX_ATTEMPTS) {
+            return ['action' => 'skipped', 'message' => "Gave up on cycle {$cycle} after {$failed} failed attempts."];
+        }
+
+        $amount = $this->currentPlanAmount($subscription, $order);
+        $attempt = $failed + 1;
+        $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
+
+        if ($dryRun) {
+            return ['action' => 'dry-run', 'message' => sprintf(
+                'Would charge RM%s (%s plan) on GKash, reference %s, card token %s…, for the cycle due %s.',
+                number_format($amount, 2), $subscription->plan_code ?? '-', $reference, substr($recurring->token, 0, 6), $cycle
+            )];
+        }
+
+        // Saved as PENDING before calling GKash: if anything dies mid-call,
+        // the row blocks a second charge instead of allowing one.
+        $charge = SubscriptionRenewalCharge::create([
+            'subscription_id' => $subscription->id,
+            'payment_recurring_id' => $recurring->id,
+            'order_id' => $order->id,
+            'gateway' => 'gkash',
+            'merchant_id' => config('services.gkash.merchant_id'),
+            'reference' => $reference,
+            'cycle_date' => $cycle,
+            'attempt' => $attempt,
+            'plan_code' => $subscription->plan_code,
+            'amount' => $amount,
+            'status' => SubscriptionRenewalCharge::PENDING,
+        ]);
+
+        $result = (new GkashPaymentService())->chargeRecurring($recurring->token, $amount, $reference, 'MONTHLY');
+
+        $charge->request_response = json_encode($result['raw']);
+        $charge->tran_id = $result['raw']['POID'] ?? null;
+        $charge->save();
+
+        if ($result['outcome'] === 'paid') {
+            $this->markPaid($charge, $result['raw'], $result['epkey']);
+            return ['action' => 'paid', 'message' => "Charged RM" . number_format($amount, 2) . " ({$reference}, POID {$charge->tran_id}).", 'charge_id' => $charge->id];
+        }
+
+        $reason = trim(($result['status'] ?? '') . ' ' . ($result['description'] ?? '')) ?: 'Rejected by GKash';
+
+        if ($result['outcome'] === 'failed') {
+            $this->markFailed($charge, $reason);
+            return ['action' => 'failed', 'message' => "Charge {$reference} failed: {$reason}", 'charge_id' => $charge->id];
+        }
+
+        $charge->reason = mb_substr($reason, 0, 300);
+        $charge->save();
+        $this->notifyAdmin(
+            "Subscription renewal pending at GKash",
+            "Subscription #{$subscription->id} (user #{$user->id}, {$user->email}): charge {$reference} for RM" . number_format($amount, 2)
+            . " came back as \"{$reason}\". The customer may or may not have been charged, so it will not be retried automatically.\n"
+            . "Check {$reference} in the GKash merchant portal, then run on the server:\n"
+            . "php artisan automaid:gkash-test-renewal {$subscription->id} --resolve={$reference} --as=paid   (or --as=failed)"
+        );
+        return ['action' => 'pending', 'message' => "Charge {$reference} is pending at GKash ({$reason}); admin alerted, not retrying.", 'charge_id' => $charge->id];
+    }
+
+    /**
+     * GKash callback for a renewal charge (cartid "SR..."), e.g. the final
+     * result of a charge that first came back "11 - Pending". The caller
+     * has already verified the signature. Safe to receive more than once.
+     */
+    public function handleGkashCallback(array $data): string
+    {
+        $charge = SubscriptionRenewalCharge::where('reference', $data['cartid'] ?? null)->first();
+        if (!$charge) {
+            Log::warning('GKash renewal callback: unknown reference', ['cartid' => $data['cartid'] ?? null]);
+            return 'OK';
+        }
+        if (in_array($charge->status, [SubscriptionRenewalCharge::PAID, SubscriptionRenewalCharge::FAILED], true)) {
+            return 'OK'; // already settled (the synchronous reply usually gets there first)
+        }
+
+        $charge->callback_data = json_encode($data);
+        $charge->tran_id = $data['POID'] ?? $charge->tran_id;
+        $status = (string) ($data['status'] ?? '');
+
+        if (str_starts_with($status, '88')) {
+            if (number_format((float) ($data['amount'] ?? 0), 2, '.', '') !== number_format((float) $charge->amount, 2, '.', '')) {
+                Log::error('GKash renewal callback: amount differs from what we charged', ['reference' => $charge->reference, 'charged' => $charge->amount, 'callback' => $data['amount'] ?? null]);
+            }
+            $charge->save();
+            $this->markPaid($charge, $data, $data['epkey'] ?? null);
+        } elseif (str_starts_with($status, '66')) {
+            $charge->save();
+            $this->markFailed($charge, trim($status . ' ' . ($data['description'] ?? '')), $data);
+        } else {
+            $charge->save(); // still pending
+        }
+
+        return 'OK';
+    }
+
+    /**
+     * Admin settles a pending GKash charge after checking the GKash portal.
+     * "paid" keeps the current card token unless $newToken is given (GKash's
+     * new epkey is only known from its reply or callback).
+     */
+    public function resolveGkashPending(SubscriptionRenewalCharge $charge, string $as, ?string $newToken = null): string
+    {
+        if (!in_array($charge->status, [SubscriptionRenewalCharge::PENDING, SubscriptionRenewalCharge::ACCEPTED], true)) {
+            return "Charge {$charge->reference} is already {$charge->status}; nothing changed.";
+        }
+        if ($as === 'paid') {
+            $this->markPaid($charge, ['resolved_by' => 'admin', 'at' => now()->toDateTimeString()], $newToken);
+            return "Marked {$charge->reference} as PAID; the subscription now runs until " . Carbon::parse($charge->cycle_date)->addMonth()->toDateString() . '.';
+        }
+        $this->markFailed($charge, 'Admin: GKash portal shows this charge was not successful.');
+        return "Marked {$charge->reference} as FAILED; the customer was notified and tomorrow's run will retry (if attempts remain).";
+    }
+
+    /** Current plan price (so an upgrade is billed at the new price), not the sign-up order's amount. */
+    protected function currentPlanAmount(Subscription $subscription, $order): float
+    {
+        $setting = Setting::find(1);
+        $amount = $setting ? $subscription->planPrice($setting) : 0;
+        return $amount >= 1 ? (float) $amount : (float) $order->grand_total;
+    }
+
+    protected function notifyAdmin(string $subject, string $body): void
+    {
+        Log::warning($subject, ['details' => $body]);
+        try {
+            (new TelegramService())->notifyAdmin("⚠️ <b>" . e($subject) . "</b>\n" . e($body));
+        } catch (\Throwable $e) {
+            Log::error('Telegram admin alert failed', ['error' => $e->getMessage()]);
+        }
+        try {
+            $email = \App\Models\User::superAdminEmail();
+            if ($email) {
+                (new OneSignalService())->sendEmail($email, 'Auto Maid admin: ' . $subject, nl2br(e($body)));
+            }
+        } catch (\Throwable $e) {
+            Log::error('Admin email alert failed', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
      * Fiuu's recurring result callback (nbcb=1). Returns the body Fiuu
      * expects back. Safe to receive more than once.
      */
@@ -171,9 +353,9 @@ class SubscriptionRenewalService
         return $ack;
     }
 
-    protected function markPaid(SubscriptionRenewalCharge $charge, array $data): void
+    protected function markPaid(SubscriptionRenewalCharge $charge, array $data, ?string $newToken = null): void
     {
-        DB::transaction(function () use ($charge, $data) {
+        DB::transaction(function () use ($charge, $data, $newToken) {
             $recurring = $charge->paymentRecurring;
             $subscription = $charge->subscription;
             $payment = $recurring?->payment;
@@ -184,7 +366,7 @@ class SubscriptionRenewalService
             $charge->save();
 
             if (!$recurring || !$subscription || !$order) {
-                Log::error('Fiuu renewal paid but subscription records are missing', ['charge_id' => $charge->id]);
+                Log::error('Renewal paid but subscription records are missing', ['charge_id' => $charge->id]);
                 return;
             }
 
@@ -209,7 +391,9 @@ class SubscriptionRenewalService
                     'transaction_id' => $transaction->id,
                 ],
                 [
-                    'token' => $recurring->token,
+                    // GKash issues a new epkey with every successful charge;
+                    // Fiuu's token stays the same.
+                    'token' => $newToken ?: $recurring->token,
                     'merchant_id' => $recurring->merchant_id,
                     'payment_date' => now()->toDateString(),
                     'next_payment_date' => $next->toDateString(),
@@ -262,7 +446,7 @@ class SubscriptionRenewalService
             });
         });
 
-        Log::info('Fiuu renewal paid', ['reference' => $charge->reference, 'tran_id' => $charge->tran_id]);
+        Log::info('Subscription renewal paid', ['gateway' => $charge->gateway, 'reference' => $charge->reference, 'tran_id' => $charge->tran_id]);
     }
 
     protected function markFailed(SubscriptionRenewalCharge $charge, string $reason, ?array $data = null, bool $notify = true): void
@@ -279,7 +463,7 @@ class SubscriptionRenewalService
             ->whereDate('cycle_date', $charge->cycle_date)->where('status', SubscriptionRenewalCharge::FAILED)->count();
         $finalAttempt = $failed >= SubscriptionRenewalCharge::MAX_ATTEMPTS;
 
-        Log::warning('Fiuu renewal failed', ['reference' => $charge->reference, 'reason' => $reason, 'attempt' => $failed, 'final' => $finalAttempt]);
+        Log::warning('Subscription renewal failed', ['gateway' => $charge->gateway, 'reference' => $charge->reference, 'reason' => $reason, 'attempt' => $failed, 'final' => $finalAttempt]);
 
         $subscription = $charge->subscription;
         if ($finalAttempt) {

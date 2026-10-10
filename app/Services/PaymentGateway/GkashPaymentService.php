@@ -144,8 +144,9 @@ class GkashPaymentService implements PaymentGatewayInterface
     /**
      * Step 4 of the recurring flow — charges a previously-tokenized
      * card using the epkey from either the initial checkout callback
-     * or the previous recurring charge. Synchronous: the result comes
-     * back directly in this response, no separate webhook involved.
+     * or the previous recurring charge. Usually synchronous (the result
+     * comes back in this response); a "11 - Pending" result is settled
+     * later by a callback to callbackurl.
      *
      * GKash returns a NEW epkey with every successful charge — the
      * token rotates, it is not reused indefinitely the way Fiuu's
@@ -156,7 +157,7 @@ class GkashPaymentService implements PaymentGatewayInterface
      * @param  float|string $amount
      * @param  string $cartId       must be unique per charge attempt
      * @param  string $recurringType
-     * @return array{success: bool, epkey: ?string, status: ?string, description: ?string, raw: array}
+     * @return array{success: bool, outcome: string, epkey: ?string, status: ?string, description: ?string, raw: array}
      */
     public function chargeRecurring(string $epkey, $amount, string $cartId, string $recurringType): array
     {
@@ -170,10 +171,28 @@ class GkashPaymentService implements PaymentGatewayInterface
             'v_cartid' => $cartId,
             'recurringtype' => $recurringType,
             'epkey' => $epkey,
+            // Lets GKash tell us the final result if the charge comes
+            // back "11 - Pending" (see SubscriptionRenewalService::handleGkashCallback).
+            'callbackurl' => route('webhook.gkash.notification'),
         ];
         $payload['signature'] = $this->buildRequestSignature($cartId, $amount, 'MYR');
 
-        $response = Http::asForm()->post($this->baseUrl . '/api/payment/submit', $payload);
+        // outcome:
+        //   paid    - "88 - Transferred"
+        //   failed  - "66 - Failed", or GKash rejected the request outright
+        //             (4xx with no status) — no money moved
+        //   pending - "11 - Pending", a timeout, a 5xx or an unreadable
+        //             reply: the card MAY have been charged, so the caller
+        //             must not charge again until this is resolved.
+        try {
+            $response = Http::asForm()->timeout(45)->post($this->baseUrl . '/api/payment/submit', $payload);
+        } catch (\Throwable $e) {
+            \Log::error('GkashPaymentService::chargeRecurring no reply from GKash', ['cart_id' => $cartId, 'error' => $e->getMessage()]);
+            return [
+                'success' => false, 'outcome' => 'pending', 'epkey' => null, 'status' => null,
+                'description' => 'No reply from GKash: ' . $e->getMessage(), 'raw' => [],
+            ];
+        }
         $result = $response->json() ?? [];
 
         \Log::info('GkashPaymentService::chargeRecurring', [
@@ -182,17 +201,23 @@ class GkashPaymentService implements PaymentGatewayInterface
             'response_body' => $result,
         ]);
 
-        // "88 - Transferred" is a confirmed success status (the full
-        // table now also confirms "66 - Failed" and "11 - Pending" as
-        // the other possible values).
         $status = (string) ($result['status'] ?? '');
-        $success = str_starts_with($status, '88');
+        if (str_starts_with($status, '88')) {
+            $outcome = 'paid';
+        } elseif (str_starts_with($status, '66')) {
+            $outcome = 'failed';
+        } elseif ($status === '' && $response->clientError()) {
+            $outcome = 'failed';
+        } else {
+            $outcome = 'pending';
+        }
 
         return [
-            'success' => $success,
+            'success' => $outcome === 'paid',
+            'outcome' => $outcome,
             'epkey' => $result['epkey'] ?? null,
             'status' => $result['status'] ?? null,
-            'description' => $result['description'] ?? null,
+            'description' => $result['description'] ?? ($result['message'] ?? ($status === '' ? 'HTTP ' . $response->status() : null)),
             'raw' => $result,
         ];
     }

@@ -26,11 +26,12 @@ use Illuminate\Support\Facades\Log;
  * Handles GKash payment confirmations for both one-off transactions
  * (Booking, Dry Cleaning, Bag Purchase) and — as of Phase 2 — the
  * initial subscription checkout that tokenizes a card for recurring
- * billing. Monthly recurring CHARGES themselves don't come through
- * this controller at all: per doc.gkash.my/v2/recurring-payments,
- * that's a synchronous server-to-server call
- * (GkashPaymentService::chargeRecurring), handled entirely inside
- * CheckNextPaymentSubscription.php, with no separate webhook.
+ * billing. Monthly recurring CHARGES are a server-to-server call
+ * (GkashPaymentService::chargeRecurring, run by
+ * SubscriptionRenewalService) whose result normally comes back
+ * directly; if one comes back "11 - Pending", GKash's later callback
+ * for it (cartid "SR...") is passed to
+ * SubscriptionRenewalService::handleGkashCallback below.
  *
  * Built as its own self-contained controller rather than sharing code
  * with FiuuController, so nothing about the already-working Fiuu flow
@@ -119,6 +120,12 @@ class GkashController extends Controller
             return response('signature verification failed', 400);
         }
 
+        // Monthly renewal charge results (cartid "SR...") — not a checkout.
+        if (\App\Models\SubscriptionRenewalCharge::isReference($data['cartid'] ?? null)) {
+            return response((new \App\Services\SubscriptionRenewalService())->handleGkashCallback($data), 200)
+                ->header('Content-Type', 'text/plain');
+        }
+
         $order = Order::find($data['cartid'] ?? null);
         Log::info('GKash payment check', [
             'cartid_requested' => $data['cartid'] ?? null,
@@ -157,8 +164,8 @@ class GkashController extends Controller
             Order::SUBSCRIPTION_UPDATE,
             Order::SUBSCRIPTION_UPGRADE,
         ])) {
-            // Renewals never reach here (synchronous, no webhook — see
-            // class docblock). Update/upgrade checkouts for an
+            // Renewal charges are routed to SubscriptionRenewalService
+            // above (cartid "SR..."). Update/upgrade checkouts for an
             // already-GKash subscription would land here in principle,
             // but re-tokenizing mid-lifecycle isn't handled yet.
             Log::error('GKash webhook received a subscription update/upgrade order — not yet supported.', ['order_id' => $order->id]);

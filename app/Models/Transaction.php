@@ -60,7 +60,41 @@ class Transaction extends Model implements Auditable
         return $this->belongsTo(\App\Models\Payment::class);
     }
 
+    /**
+     * Which gateway took this payment: 'gkash' or 'fiuu'.
+     *
+     * payments.payment_method is set by each gateway's callback ('gkash',
+     * 'fiuu', 'fiuu-recurring'). Renewals point at the original sign-up
+     * payment, which is on the same gateway the subscription is locked to.
+     * Rows with no method predate GKash, so they were Fiuu.
+     */
+    public function gatewayCode(): string
+    {
+        $method = $this->payment?->payment_method;
+        if ($method === Payment::GKASH) {
+            return 'gkash';
+        }
+        if ($method === Payment::FIUU || $method === Payment::FIUU_RECURRING) {
+            return 'fiuu';
+        }
+        return $this->order?->payment_gateway === 'gkash' ? 'gkash' : 'fiuu';
+    }
+
+    public static function gatewayLabel(string $code): string
+    {
+        return $code === 'gkash' ? 'GKash' : 'Fiuu';
+    }
+
+    /** Filter helper: transactions taken by $code ('gkash' or 'fiuu'). */
+    public function scopeGateway($query, string $code)
+    {
+        $isGkash = fn ($q) => $q
+            ->whereHas('payment', fn ($p) => $p->where('payment_method', Payment::GKASH))
+            ->orWhere(fn ($q2) => $q2
+                ->whereDoesntHave('payment', fn ($p) => $p->whereNotNull('payment_method'))
+                ->whereHas('order', fn ($o) => $o->where('payment_gateway', 'gkash')));
+
+        return $code === 'gkash' ? $query->where($isGkash) : $query->whereNot($isGkash);
+    }
+
 }
-
-
-

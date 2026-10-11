@@ -1,0 +1,102 @@
+diff --git a/app/Filament/Resources/TransactionResource.php b/app/Filament/Resources/TransactionResource.php
+index 1fdf09c..cda9b66 100644
+--- a/app/Filament/Resources/TransactionResource.php
++++ b/app/Filament/Resources/TransactionResource.php
+@@ -48,6 +48,7 @@ public static function canCreate(): bool
+     public static function table(Table $table): Table
+     {
+         return $table
++            ->modifyQueryUsing(fn ($query) => $query->with(['payment', 'order.user']))
+             ->columns([
+                 TextColumn::make('index')
+                     ->label('No')
+@@ -83,6 +84,12 @@ public static function table(Table $table): Table
+                         ];
+                         return $labels[$state] ?? strtoupper(str_replace('_', ' ', $state));
+                     }),
++                TextColumn::make('gateway')
++                    ->label('Payment Gateway')
++                    ->badge()
++                    ->state(fn (Transaction $record): string => $record->gatewayCode())
++                    ->formatStateUsing(fn (string $state): string => Transaction::gatewayLabel($state))
++                    ->color(fn (string $state): string => $state === 'gkash' ? 'warning' : 'info'),
+                 TextColumn::make('amount')
+                     ->label('Total Amount (RM)')
+                     ->searchable()
+@@ -108,6 +115,13 @@ public static function table(Table $table): Table
+                     ])
+                     ->placeholder('All Types')
+                     ->label(false),
++                SelectFilter::make('gateway')
++                    ->options(['fiuu' => 'Fiuu', 'gkash' => 'GKash'])
++                    ->placeholder('All Gateways')
++                    ->label(false)
++                    ->query(fn ($query, array $data) => filled($data['value'] ?? null)
++                        ? $query->gateway($data['value'])
++                        : $query),
+                 Filter::make('created_at')
+                     ->form([
+                         DatePicker::make('date')->label(false),
+diff --git a/app/Filament/Resources/TransactionResource/Pages/ViewTransaction.php b/app/Filament/Resources/TransactionResource/Pages/ViewTransaction.php
+index 8011f85..d6002a3 100755
+--- a/app/Filament/Resources/TransactionResource/Pages/ViewTransaction.php
++++ b/app/Filament/Resources/TransactionResource/Pages/ViewTransaction.php
+@@ -81,6 +81,11 @@ public function form(Form $form): Form
+                                                 ->label(false)
+                                                 ->content(fn ($record) => $record->payment?->payment_method ?? '-'),
+ 
++                                            Placeholder::make('label_gateway')->label(false)->content('Payment Gateway'),
++                                            Placeholder::make('gateway')
++                                                ->label(false)
++                                                ->content(fn ($record) => \App\Models\Transaction::gatewayLabel($record->gatewayCode())),
++
+                                             Placeholder::make('label_transaction_id')->label(false)->content('Transaction ID'),
+                                             Placeholder::make('transaction_id')
+                                                 ->label(false)
+diff --git a/app/Models/Transaction.php b/app/Models/Transaction.php
+index df55481..886d348 100644
+--- a/app/Models/Transaction.php
++++ b/app/Models/Transaction.php
+@@ -60,7 +60,41 @@ public function payment()
+         return $this->belongsTo(\App\Models\Payment::class);
+     }
+ 
+-}
++    /**
++     * Which gateway took this payment: 'gkash' or 'fiuu'.
++     *
++     * payments.payment_method is set by each gateway's callback ('gkash',
++     * 'fiuu', 'fiuu-recurring'). Renewals point at the original sign-up
++     * payment, which is on the same gateway the subscription is locked to.
++     * Rows with no method predate GKash, so they were Fiuu.
++     */
++    public function gatewayCode(): string
++    {
++        $method = $this->payment?->payment_method;
++        if ($method === Payment::GKASH) {
++            return 'gkash';
++        }
++        if ($method === Payment::FIUU || $method === Payment::FIUU_RECURRING) {
++            return 'fiuu';
++        }
++        return $this->order?->payment_gateway === 'gkash' ? 'gkash' : 'fiuu';
++    }
+ 
++    public static function gatewayLabel(string $code): string
++    {
++        return $code === 'gkash' ? 'GKash' : 'Fiuu';
++    }
+ 
++    /** Filter helper: transactions taken by $code ('gkash' or 'fiuu'). */
++    public function scopeGateway($query, string $code)
++    {
++        $isGkash = fn ($q) => $q
++            ->whereHas('payment', fn ($p) => $p->where('payment_method', Payment::GKASH))
++            ->orWhere(fn ($q2) => $q2
++                ->whereDoesntHave('payment', fn ($p) => $p->whereNotNull('payment_method'))
++                ->whereHas('order', fn ($o) => $o->where('payment_gateway', 'gkash')));
+ 
++        return $code === 'gkash' ? $query->where($isGkash) : $query->whereNot($isGkash);
++    }
++
++}

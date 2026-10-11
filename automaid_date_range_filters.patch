@@ -1,0 +1,140 @@
+diff --git a/app/Filament/Filters/DateRangeFilter.php b/app/Filament/Filters/DateRangeFilter.php
+new file mode 100644
+index 0000000..67d6439
+--- /dev/null
++++ b/app/Filament/Filters/DateRangeFilter.php
+@@ -0,0 +1,85 @@
++<?php
++
++namespace App\Filament\Filters;
++
++use Carbon\Carbon;
++use Filament\Forms\Components\DatePicker;
++use Filament\Forms\Components\Grid;
++use Filament\Forms\Components\Select;
++use Filament\Tables\Filters\Filter;
++use Filament\Tables\Filters\Indicator;
++use Illuminate\Database\Eloquent\Builder;
++
++/**
++ * "Date: [field] From [..] To [..]" table filter.
++ *
++ * $fields maps a key to [label, apply], where apply is
++ * fn (Builder $query, ?string $from, ?string $until) and from/until are
++ * Y-m-d strings (either may be empty). The first field is the default.
++ * Both ends are inclusive, and the CSV export follows it because exports
++ * use the filtered table query.
++ */
++class DateRangeFilter
++{
++    /**
++     * @param  array<string, array{0: string, 1: callable}> $fields
++     */
++    public static function make(string $name, array $fields): Filter
++    {
++        $options = array_map(fn ($f) => $f[0], $fields);
++        $default = array_key_first($fields);
++
++        return Filter::make($name)
++            ->form([
++                Grid::make(count($fields) > 1 ? 3 : 2)->schema(array_values(array_filter([
++                    count($fields) > 1
++                        ? Select::make('field')->label('Date')->options($options)->default($default)->selectablePlaceholder(false)
++                        : null,
++                    DatePicker::make('from')->label('From')->native(false)->displayFormat('d M Y')->closeOnDateSelection()
++                        ->maxDate(fn ($get) => $get('until') ?: null),
++                    DatePicker::make('until')->label('To')->native(false)->displayFormat('d M Y')->closeOnDateSelection()
++                        ->minDate(fn ($get) => $get('from') ?: null),
++                ]))),
++            ])
++            ->columnSpan(2)
++            ->query(function (Builder $query, array $data) use ($fields, $default) {
++                $from = $data['from'] ?? null;
++                $until = $data['until'] ?? null;
++                if (blank($from) && blank($until)) {
++                    return $query;
++                }
++                $field = $fields[$data['field'] ?? $default] ?? $fields[$default];
++                return ($field[1])($query, $from ? Carbon::parse($from)->toDateString() : null, $until ? Carbon::parse($until)->toDateString() : null) ?? $query;
++            })
++            ->indicateUsing(function (array $data) use ($options, $default): array {
++                $from = $data['from'] ?? null;
++                $until = $data['until'] ?? null;
++                if (blank($from) && blank($until)) {
++                    return [];
++                }
++                $label = $options[$data['field'] ?? $default] ?? $options[$default];
++                $text = match (true) {
++                    filled($from) && filled($until) => Carbon::parse($from)->format('d M Y') . ' – ' . Carbon::parse($until)->format('d M Y'),
++                    filled($from) => 'from ' . Carbon::parse($from)->format('d M Y'),
++                    default => 'until ' . Carbon::parse($until)->format('d M Y'),
++                };
++                return [Indicator::make("{$label}: {$text}")];
++            });
++    }
++
++    /** Standard apply callback for a date/datetime column on the table itself. */
++    public static function column(string $column): callable
++    {
++        return fn (Builder $q, ?string $from, ?string $until) => $q
++            ->when($from, fn ($q) => $q->whereDate($column, '>=', $from))
++            ->when($until, fn ($q) => $q->whereDate($column, '<=', $until));
++    }
++
++    /** Apply callback for a date column on a relation. */
++    public static function relation(string $relation, string $column): callable
++    {
++        return fn (Builder $q, ?string $from, ?string $until) => $q->whereHas($relation, fn ($r) => $r
++            ->when($from, fn ($r) => $r->whereDate($column, '>=', $from))
++            ->when($until, fn ($r) => $r->whereDate($column, '<=', $until)));
++    }
++}
+diff --git a/app/Filament/Resources/OrderResource.php b/app/Filament/Resources/OrderResource.php
+index 77773f4..8fe8e33 100644
+--- a/app/Filament/Resources/OrderResource.php
++++ b/app/Filament/Resources/OrderResource.php
+@@ -220,6 +220,13 @@ public static function table(Tables\Table $table): Tables\Table
+                     ->toggleable(isToggledHiddenByDefault: true),
+             ])
+             ->defaultSort('id', 'desc')
++            ->filters([
++                \App\Filament\Filters\DateRangeFilter::make('date_range', [
++                    'created' => ['Order date', \App\Filament\Filters\DateRangeFilter::column('orders.created_at')],
++                    'pickup' => ['Pickup date', \App\Filament\Filters\DateRangeFilter::relation('booking', 'pickup_date')],
++                ]),
++            ], layout: \Filament\Tables\Enums\FiltersLayout::AboveContent)
++            ->filtersFormColumns(2)
+             ->headerActions([
+                 // Filament's native queued export (ExportAction +
+                 // Exporter) needs the `exports` table AND a working
+diff --git a/app/Filament/Resources/SubscriptionResource.php b/app/Filament/Resources/SubscriptionResource.php
+index dfd35f6..5db2e9f 100755
+--- a/app/Filament/Resources/SubscriptionResource.php
++++ b/app/Filament/Resources/SubscriptionResource.php
+@@ -123,6 +123,26 @@ public static function table(Table $table): Table
+                     )),
+             ])
+             ->defaultSort('id', 'desc')
++            ->filters([
++                \App\Filament\Filters\DateRangeFilter::make('date_range', [
++                    'created' => ['Subscribed date', \App\Filament\Filters\DateRangeFilter::column('subscriptions.created_at')],
++                    'renewal' => ['Next renewal', fn ($q, $from, $until) => $q
++                        ->where('subscriptions.status', Subscription::ACTIVE)
++                        ->whereHas('recurring_active', fn ($r) => $r
++                            ->when($from, fn ($r) => $r->whereDate('next_payment_date', '>=', $from))
++                            ->when($until, fn ($r) => $r->whereDate('next_payment_date', '<=', $until)))],
++                ]),
++                \Filament\Tables\Filters\SelectFilter::make('status')
++                    ->options([
++                        Subscription::ACTIVE => 'Active',
++                        Subscription::PENDING => 'Pending',
++                        Subscription::CANCELLED => 'Cancelled',
++                        Subscription::INACTIVE => 'Inactive',
++                    ])
++                    ->placeholder('All Statuses')
++                    ->label('Status'),
++            ], layout: \Filament\Tables\Enums\FiltersLayout::AboveContent)
++            ->filtersFormColumns(3)
+             ->actions([
+                 Tables\Actions\EditAction::make()
+                     ->label(''),

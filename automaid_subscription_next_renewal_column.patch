@@ -1,0 +1,93 @@
+diff --git a/app/Filament/Resources/SubscriptionResource.php b/app/Filament/Resources/SubscriptionResource.php
+index cb83157..dfd35f6 100755
+--- a/app/Filament/Resources/SubscriptionResource.php
++++ b/app/Filament/Resources/SubscriptionResource.php
+@@ -49,6 +49,9 @@ public static function canCreate(): bool
+     public static function table(Table $table): Table
+     {
+         return $table
++            ->modifyQueryUsing(fn ($query) => $query
++                ->with(['user', 'recurring_active'])
++                ->withExists(['renewalCharges as has_pending_charge' => fn ($c) => $c->whereIn('status', ['pending', 'accepted'])]))
+             ->columns([
+                 TextColumn::make('index')
+                     ->label('No')
+@@ -75,6 +78,49 @@ public static function table(Table $table): Table
+                     })
+                     ->formatStateUsing(fn(string $state): string => ucfirst($state))
+                     ->sortable(),
++                TextColumn::make('next_renewal')
++                    ->label('Next Renewal')
++                    ->state(fn (Subscription $record) => $record->nextRenewalDate())
++                    ->formatStateUsing(fn ($state) => $state?->format('d M Y'))
++                    ->placeholder('-')
++                    ->badge()
++                    ->color(fn (Subscription $record): string => match (true) {
++                        (bool) $record->has_pending_charge => 'warning',
++                        $record->nextRenewalDate()?->lt(today()) ?? false => 'danger',
++                        $record->nextRenewalDate()?->lte(today()->addDays(3)) ?? false => 'warning',
++                        default => 'gray',
++                    })
++                    ->description(function (Subscription $record): ?string {
++                        if ($record->status !== Subscription::ACTIVE) {
++                            return null;
++                        }
++                        if (!$record->recurring_active) {
++                            return 'No card on file — will not auto-renew';
++                        }
++                        $gateway = $record->payment_gateway === 'gkash' ? 'GKash' : 'Fiuu';
++                        if ($record->has_pending_charge) {
++                            return "{$gateway} charge pending — check renewal";
++                        }
++                        $date = $record->nextRenewalDate();
++                        if ($date && $date->lt(today())) {
++                            return "{$gateway} · overdue (retrying)";
++                        }
++                        $days = $date ? (int) today()->diffInDays($date) : null;
++                        return $gateway . ' · ' . match (true) {
++                            $days === 0 => 'today',
++                            $days === 1 => 'tomorrow',
++                            default => "in {$days} days",
++                        };
++                    })
++                    ->sortable(query: fn ($query, string $direction) => $query->orderBy(
++                        \App\Models\PaymentRecurring::select('next_payment_date')
++                            ->whereColumn('payment_recurrings.subscription_id', 'subscriptions.id')
++                            ->whereIn('status', ['subscription', 'subscription_renewal'])
++                            ->where('status_payment', 'paid')
++                            ->orderByDesc('id')
++                            ->limit(1),
++                        $direction
++                    )),
+             ])
+             ->defaultSort('id', 'desc')
+             ->actions([
+diff --git a/app/Models/Subscription.php b/app/Models/Subscription.php
+index f846dd0..4b09a04 100644
+--- a/app/Models/Subscription.php
++++ b/app/Models/Subscription.php
+@@ -209,6 +209,24 @@ public function recurrings()
+      * [recurring_latest description]
+      * @return [type] [description]
+      */
++    public function renewalCharges()
++    {
++        return $this->hasMany(SubscriptionRenewalCharge::class);
++    }
++
++    /**
++     * Date the nightly job will next charge the stored card, or null when
++     * nothing will be charged (not active, or no card token on file).
++     */
++    public function nextRenewalDate(): ?\Carbon\Carbon
++    {
++        if ($this->status !== self::ACTIVE) {
++            return null;
++        }
++        $date = $this->recurring_active?->next_payment_date;
++        return $date ? \Carbon\Carbon::parse($date)->startOfDay() : null;
++    }
++
+     public function recurring_latest()
+     {
+         return $this->hasOne('App\Models\PaymentRecurring', 'subscription_id')->orderBy('id', 'desc');

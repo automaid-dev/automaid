@@ -48,6 +48,7 @@ class TransactionResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->modifyQueryUsing(fn ($query) => $query->with(['payment', 'order.user']))
             ->columns([
                 TextColumn::make('index')
                     ->label('No')
@@ -83,6 +84,12 @@ class TransactionResource extends Resource
                         ];
                         return $labels[$state] ?? strtoupper(str_replace('_', ' ', $state));
                     }),
+                TextColumn::make('gateway')
+                    ->label('Payment Gateway')
+                    ->badge()
+                    ->state(fn (Transaction $record): string => $record->gatewayCode())
+                    ->formatStateUsing(fn (string $state): string => Transaction::gatewayLabel($state))
+                    ->color(fn (string $state): string => $state === 'gkash' ? 'warning' : 'info'),
                 TextColumn::make('amount')
                     ->label('Total Amount (RM)')
                     ->searchable()
@@ -108,15 +115,29 @@ class TransactionResource extends Resource
                     ])
                     ->placeholder('All Types')
                     ->label(false),
-                Filter::make('created_at')
-                    ->form([
-                        DatePicker::make('date')->label(false),
-                    ])
-                    ->query(function ($query, array $data) {
-                        return $query
-                            ->when($data['date'], fn ($q) => $q->whereDate('created_at', $data['date']));
-                    })
+                SelectFilter::make('gateway')
+                    ->options(['fiuu' => 'Fiuu', 'gkash' => 'GKash'])
+                    ->placeholder('All Gateways')
+                    ->label(false)
+                    ->query(fn ($query, array $data) => filled($data['value'] ?? null)
+                        ? $query->gateway($data['value'])
+                        : $query),
+                \App\Filament\Filters\DateRangeFilter::make('date_range', [
+                    'created' => ['Date', \App\Filament\Filters\DateRangeFilter::column('transactions.created_at')],
+                ]),
             ], layout: FiltersLayout::AboveContent)
+            ->filtersFormColumns(4)
+            ->headerActions([
+                // Same approach as Orders: streams a CSV of exactly what the
+                // table currently shows (filters, search, sort).
+                Tables\Actions\Action::make('export')
+                    ->label('Export to CSV')
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->color('gray')
+                    ->action(fn ($livewire) => static::exportCsv(
+                        $livewire->getFilteredSortedTableQuery()->with(['payment', 'order.user'])->get()
+                    )),
+            ])
             ->actions([
                 Tables\Actions\ViewAction::make()
                     ->label('')
@@ -130,6 +151,40 @@ class TransactionResource extends Resource
                 //     Tables\Actions\DeleteBulkAction::make(),
                 // ]),
             ]);
+    }
+
+    protected static function exportCsv($transactions): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        $types = [
+            Transaction::PURCHASE_BAG => 'Bag Purchase',
+            Transaction::SUBSCRIPTION => 'Subscription',
+            Transaction::SUBSCRIPTION_RENEWAL => 'Subscription Renewal',
+            Transaction::BOOKING => 'Booking',
+        ];
+        $filename = 'transactions_' . now()->format('Y-m-d_His') . '.csv';
+
+        return response()->streamDownload(function () use ($transactions, $types) {
+            $handle = fopen('php://output', 'w');
+            fputcsv($handle, [
+                'Transaction ID', 'Date', 'Order ID', 'Order No', 'Customer', 'Email',
+                'Type', 'Payment Gateway', 'Amount (RM)', 'Status',
+            ]);
+            foreach ($transactions as $t) {
+                fputcsv($handle, [
+                    $t->id,
+                    optional($t->created_at)->format('Y-m-d H:i'),
+                    $t->order_id ?? '-',
+                    $t->order->series_no ?? '-',
+                    $t->order->user->name ?? '-',
+                    $t->order->user->email ?? '-',
+                    $types[$t->type] ?? ucwords(str_replace('_', ' ', (string) $t->type)),
+                    Transaction::gatewayLabel($t->gatewayCode()),
+                    number_format((float) $t->amount, 2, '.', ''),
+                    ucfirst((string) $t->status),
+                ]);
+            }
+            fclose($handle);
+        }, $filename, ['Content-Type' => 'text/csv']);
     }
 
     public static function getRelations(): array

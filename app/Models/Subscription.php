@@ -209,6 +209,24 @@ class Subscription extends Model implements Auditable
      * [recurring_latest description]
      * @return [type] [description]
      */
+    public function renewalCharges()
+    {
+        return $this->hasMany(SubscriptionRenewalCharge::class);
+    }
+
+    /**
+     * Date the nightly job will next charge the stored card, or null when
+     * nothing will be charged (not active, or no card token on file).
+     */
+    public function nextRenewalDate(): ?\Carbon\Carbon
+    {
+        if ($this->status !== self::ACTIVE) {
+            return null;
+        }
+        $date = $this->recurring_active?->next_payment_date;
+        return $date ? \Carbon\Carbon::parse($date)->startOfDay() : null;
+    }
+
     public function recurring_latest()
     {
         return $this->hasOne('App\Models\PaymentRecurring', 'subscription_id')->orderBy('id', 'desc');

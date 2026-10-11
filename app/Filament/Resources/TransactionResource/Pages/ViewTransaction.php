@@ -81,6 +81,11 @@ class ViewTransaction extends ViewRecord
                                                 ->label(false)
                                                 ->content(fn ($record) => $record->payment?->payment_method ?? '-'),
 
+                                            Placeholder::make('label_gateway')->label(false)->content('Payment Gateway'),
+                                            Placeholder::make('gateway')
+                                                ->label(false)
+                                                ->content(fn ($record) => \App\Models\Transaction::gatewayLabel($record->gatewayCode())),
+
                                             Placeholder::make('label_transaction_id')->label(false)->content('Transaction ID'),
                                             Placeholder::make('transaction_id')
                                                 ->label(false)

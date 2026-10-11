@@ -220,6 +220,13 @@ class OrderResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultSort('id', 'desc')
+            ->filters([
+                \App\Filament\Filters\DateRangeFilter::make('date_range', [
+                    'created' => ['Order date', \App\Filament\Filters\DateRangeFilter::column('orders.created_at')],
+                    'pickup' => ['Pickup date', \App\Filament\Filters\DateRangeFilter::relation('booking', 'pickup_date')],
+                ]),
+            ], layout: \Filament\Tables\Enums\FiltersLayout::AboveContent)
+            ->filtersFormColumns(2)
             ->headerActions([
                 // Filament's native queued export (ExportAction +
                 // Exporter) needs the `exports` table AND a working

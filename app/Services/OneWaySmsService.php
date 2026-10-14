@@ -47,10 +47,11 @@ class OneWaySmsService
 	{
 	    $otp = Otp::generate($mobile_no);
 	    if (!$otp->status) {
-	        return response()->json([
+	        // Callers read this as an array ($send['status']), not a response.
+	        return [
 	            'status' => false,
 	            'message' => $otp->message,
-	        ]);
+	        ];
 	    }
 	    $otp->mobile = $mobile_no;
 	    return $this->sendOtp($otp);
@@ -109,12 +110,12 @@ class OneWaySmsService
 				}
 				else {
 					$status = 'error';
-					$msg = "Please refer to API on Error : " . $fd;
+					$msg = $this->failureMessage((string) $fd);
 				}
 			}
 			else {
 				$status = 'error';
-				$msg = "Failed";
+				$msg = $this->failureMessage('no reply');
 			}	
 			return ['message' => $msg, 'status' => $status];
 		} catch (\Exception $e) {
@@ -123,8 +124,43 @@ class OneWaySmsService
 	}
 
 
+	/**
+	 * OneWaySMS MT return codes (negative = not sent):
+	 *   -100 wrong API username/password   -200 invalid sender ID
+	 *   -300 invalid mobile number          -400 invalid language type
+	 *   -500 invalid characters in message  -600 insufficient credit balance
+	 * The customer/rider sees a plain message; the code goes to the log, and
+	 * account-level problems (anything but a bad number) alert admin, at most
+	 * once an hour, because every OTP (sign-up, login, phone change) fails
+	 * until they are fixed.
+	 */
+	protected function failureMessage(string $code): string
+	{
+		$code = trim($code);
+		$reasons = [
+			'-100' => 'OneWaySMS API username/password rejected',
+			'-200' => 'OneWaySMS sender ID rejected',
+			'-300' => 'invalid mobile number',
+			'-400' => 'OneWaySMS language type rejected',
+			'-500' => 'invalid characters in SMS text',
+			'-600' => 'OneWaySMS credit balance is empty — top up the account',
+		];
+		$reason = $reasons[$code] ?? "OneWaySMS error {$code}";
+		\Illuminate\Support\Facades\Log::error('OTP SMS not sent', ['code' => $code, 'reason' => $reason]);
+
+		if ($code === '-300') {
+			return 'This mobile number could not receive SMS. Please check the number and try again.';
+		}
+
+		if (\Illuminate\Support\Facades\Cache::add('onewaysms_alert_' . $code, true, now()->addHour())) {
+			try {
+				(new \App\Services\TelegramService())->notifyAdmin("⚠️ <b>OTP SMS is failing</b>\nReason: " . e($reason) . " (code {$code}).\nNew sign-ups, logins by OTP and phone changes cannot complete until this is fixed.");
+			} catch (\Throwable $e) {
+				\Illuminate\Support\Facades\Log::error('Could not alert admin about SMS failure', ['error' => $e->getMessage()]);
+			}
+		}
+
+		return 'We could not send the verification SMS right now. Please try again in a few minutes, or contact support at 1-300-82-0018.';
+	}
+
 }
-
-
-
-

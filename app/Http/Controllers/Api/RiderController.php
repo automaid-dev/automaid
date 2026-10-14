@@ -63,7 +63,9 @@ class RiderController extends Controller
                     'icno' => 'required',
 
                     'address_line_1' => 'required',
-                    'address_line_2' => 'required',
+                    // Optional, same as in the app's Step 1 form (many
+                    // addresses have no second line).
+                    'address_line_2' => 'nullable',
                     'country_name' => 'required',
                     'state_name' => 'required',
                     'postcode' => 'required',

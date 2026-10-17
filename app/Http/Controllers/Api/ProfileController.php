@@ -21,6 +21,47 @@ class ProfileController extends Controller
      * @param  Request $request [description]
      * @return [type]           [description]
      */
+    /**
+     * POST /profile/delete-account {password, reason?}
+     * In-app account deletion for every role (customer, rider, merchant)
+     * — see App\Services\AccountDeletionService for exactly what is
+     * removed and what is kept.
+     */
+    public function deleteAccount(Request $request)
+    {
+        $user = $request->user();
+
+        if (!Hash::check((string) $request->password, $user->password)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Incorrect password. Please try again.',
+            ], 422);
+        }
+
+        $service = new \App\Services\AccountDeletionService();
+        if ($blocked = $service->blockingReason($user)) {
+            return response()->json([
+                'status' => false,
+                'message' => $blocked,
+            ], 409);
+        }
+
+        try {
+            $service->delete($user, $request->reason ? mb_substr((string) $request->reason, 0, 500) : null);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Account deletion failed', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            return response()->json([
+                'status' => false,
+                'message' => 'We could not delete your account right now. Please try again or contact support.',
+            ], 500);
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Your account has been deleted.',
+        ]);
+    }
+
     public function logout(Request $request)
     {
         // get current user

@@ -60,6 +60,7 @@ Route::post('/onboarding/banners', [\App\Http\Controllers\Api\BannerController::
 Route::middleware('auth:sanctum')->group( function () {
 	Route::post('/profile/device', [ProfileController::class, 'saveDevice']);
 	Route::post('/profile/logout', [ProfileController::class, 'logout']);
+	Route::post('/profile/delete-account', [ProfileController::class, 'deleteAccount'])->middleware('throttle:5,1');
 	Route::post('/profile/me', [ProfileController::class, 'me']);
 	Route::post('/profile/token', [ProfileController::class, 'token']);
 	Route::post('/profile/iagree', [ProfileController::class, 'iAgree']);

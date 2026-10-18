@@ -19,7 +19,7 @@
         </td>
         <td width="70%" 
             style="border:1px solid #e5e7eb; padding:12px;">
-            {{ $reason ?? '-' }}
+            {!! nl2br(e($reason ?? "-")) !!}
         </td>
     </tr>
 </table>

@@ -61,6 +61,9 @@ Route::middleware('auth:sanctum')->group( function () {
 	Route::post('/profile/device', [ProfileController::class, 'saveDevice']);
 	Route::post('/profile/logout', [ProfileController::class, 'logout']);
 	Route::post('/profile/delete-account', [ProfileController::class, 'deleteAccount'])->middleware('throttle:5,1');
+	// Rider/merchant re-upload after admin sent the registration back.
+	Route::post('/profile/resubmission', [\App\Http\Controllers\Api\ResubmissionController::class, 'show']);
+	Route::post('/profile/resubmission/submit', [\App\Http\Controllers\Api\ResubmissionController::class, 'submit']);
 	Route::post('/profile/me', [ProfileController::class, 'me']);
 	Route::post('/profile/token', [ProfileController::class, 'token']);
 	Route::post('/profile/iagree', [ProfileController::class, 'iAgree']);

@@ -40,40 +40,135 @@ class EditUser extends EditRecord
     {
         return [
             Action::make('reject')
-                ->label('Reject')
+                ->label('Reject / Request new documents')
                 ->icon('heroicon-o-x-circle')
                 ->color('danger')
-                ->visible(fn () => $this->record?->status === User::ONBOARDING)
-                ->requiresConfirmation()
-                ->modalHeading('Reject User')
-                ->modalDescription('Are you sure you want to reject this user?')
+                ->visible(fn () => $this->record?->status === User::ONBOARDING
+                    && ($this->record->hasRole('rider') || $this->record->hasRole('merchant')))
+                ->modalHeading('Reject registration')
+                ->modalDescription('The applicant sees this in the app and by email. If resubmission is allowed, they can upload the selected photos again and the account comes back here for you to re-verify.')
                 ->modalSubmitActionLabel('Reject')
                 ->cancelParentActions()
-                ->form([
-                    Textarea::make('reason')->label('Rejection Reason')->required(),
+                ->form(fn () => [
+                    \Filament\Forms\Components\Toggle::make('can_resubmit')
+                        ->label('Allow the applicant to resubmit documents')
+                        ->default(true)
+                        ->live(),
+                    CheckboxList::make('documents')
+                        ->label('Documents to upload again')
+                        ->options(\App\Support\RegistrationDocuments::documentOptions($this->record))
+                        ->columns(2)
+                        ->visible(fn ($get) => (bool) $get('can_resubmit'))
+                        ->required(fn ($get) => (bool) $get('can_resubmit')),
+                    CheckboxList::make('issues')
+                        ->label('What is wrong')
+                        ->options(\App\Support\RegistrationDocuments::issueOptions($this->record))
+                        ->columns(1),
+                    Textarea::make('note')
+                        ->label('Message to the applicant (optional)')
+                        ->rows(3)
+                        ->required(fn ($get) => empty($get('issues')))
+                        ->helperText('Required if no issue is ticked above.'),
                 ])
                 ->action(function (array $data) {
+                    $details = [
+                        'documents' => array_values($data['can_resubmit'] ? ($data['documents'] ?? []) : []),
+                        'issues' => array_values($data['issues'] ?? []),
+                        'note' => filled($data['note'] ?? null) ? trim($data['note']) : null,
+                        'can_resubmit' => (bool) $data['can_resubmit'],
+                        'rejected_at' => now()->toDateTimeString(),
+                        'rejected_by' => auth()->id(),
+                    ];
+                    $reason = \App\Support\RegistrationDocuments::summary($this->record, $details);
 
-                    // uodate user
                     $this->record->update([
                         'status' => User::REJECTED,
-                        'rejected_reason' => $data['reason'],
+                        'rejected_reason' => $reason,
+                        'rejection_details' => $details,
                         'updated_by' => auth()->user()->id,
                     ]);
 
-                    $subject = 'Auto Maid: Your Registation Status: Rejected';
-                    $emailContent = (new \App\Mail\RejectUserEmail($this->record->name, $subject, $data['reason']))->render();
-                    (new \App\Services\OneSignalService())->sendEmail(
-                        $this->record->email,
-                        $subject,
-                        $emailContent,
-                    );
+                    $subject = $details['can_resubmit']
+                        ? 'Auto Maid: Action needed — please upload new documents'
+                        : 'Auto Maid: Your Registation Status: Rejected';
+                    $emailReason = $reason . ($details['can_resubmit']
+                        ? "\n\nOpen the LB MerchantRider app and log in to upload the new photos. We will verify them again as soon as you submit."
+                        : '');
+                    $emailContent = (new \App\Mail\RejectUserEmail($this->record->name, $subject, $emailReason))->render();
+                    $oneSignal = new \App\Services\OneSignalService();
+                    $oneSignal->sendEmail($this->record->email, $subject, $emailContent);
+
+                    // Push to the partner app, if the applicant has it installed.
+                    if (!empty($this->record->device_id)) {
+                        try {
+                            $oneSignal->sendOneSignalNotification(
+                                $details['can_resubmit'] ? 'Please upload new documents' : 'Registration not approved',
+                                $details['can_resubmit'] ? 'Open the app to see what needs to be re-uploaded.' : 'Open the app for details.',
+                                $this->record->device_id,
+                                ['type' => 'registration_rejected'],
+                                1
+                            );
+                        } catch (\Throwable $e) {
+                            \Illuminate\Support\Facades\Log::warning('Rejection push failed', ['user_id' => $this->record->id, 'error' => $e->getMessage()]);
+                        }
+                    }
+
                     Notification::make()
-                        ->title('User has been rejected.')
+                        ->title($details['can_resubmit'] ? 'Rejected — applicant asked to upload new documents.' : 'Registration rejected.')
                         ->success()
                         ->send();
                 }),
         ];
+    }
+
+    /**
+     * Shows what was asked for at the last rejection and when the
+     * applicant re-uploaded — only when there is something to show.
+     */
+    protected function resubmissionInfoSection(): Section
+    {
+        return Section::make('Document resubmission')
+            ->icon('heroicon-o-arrow-path')
+            ->visible(fn () => filled($this->record?->rejection_details) || $this->record?->status === User::REJECTED)
+            ->schema([
+                Placeholder::make('resubmission_info')
+                    ->label(false)
+                    ->content(function () {
+                        $u = $this->record;
+                        $d = is_array($u->rejection_details) ? $u->rejection_details : [];
+                        $docs = \App\Support\RegistrationDocuments::forUser($u);
+                        $requested = implode(', ', array_map(fn ($k) => $docs[$k][0] ?? $k, $d['documents'] ?? [])) ?: '-';
+                        $state = match (true) {
+                            $u->status === User::REJECTED && !($d['can_resubmit'] ?? true) => '<span class="text-danger-600 font-semibold">Rejected — resubmission not allowed</span>',
+                            $u->status === User::REJECTED => '<span class="text-warning-600 font-semibold">Waiting for the applicant to upload new documents</span>',
+                            $u->status === User::ONBOARDING && $u->resubmitted_at => '<span class="text-primary-600 font-semibold">Resubmitted ' . e($u->resubmitted_at->format('d M Y H:i')) . ' — please re-verify the photos below, then set Status to Active to approve</span>',
+                            default => e(ucfirst((string) $u->status)),
+                        };
+                        return new HtmlString(
+                            '<div class="space-y-1 text-sm">'
+                            . '<div>' . $state . '</div>'
+                            . '<div><b>Requested:</b> ' . e($requested) . '</div>'
+                            . '<div><b>Reason sent:</b><br>' . nl2br(e((string) $u->rejected_reason)) . '</div>'
+                            . '<div><b>Times resubmitted:</b> ' . (int) $u->resubmission_count
+                            . (!empty($d['rejected_at']) ? ' · <b>Last rejected:</b> ' . e(\Carbon\Carbon::parse($d['rejected_at'])->format('d M Y H:i')) : '') . '</div>'
+                            . '</div>'
+                        );
+                    }),
+            ]);
+    }
+
+    protected function expiryHint($state): ?HtmlString
+    {
+        if (blank($state)) {
+            return null;
+        }
+        $date = \Carbon\Carbon::parse($state)->startOfDay();
+        $days = (int) today()->diffInDays($date, false);
+        return match (true) {
+            $days < 0 => new HtmlString('<span class="text-danger-600 font-semibold">Expired ' . abs($days) . ' day(s) ago</span>'),
+            $days < \App\Support\RegistrationDocuments::MIN_DAYS_VALID => new HtmlString('<span class="text-warning-600 font-semibold">Expires in ' . $days . ' day(s)</span>'),
+            default => new HtmlString('<span class="text-success-600">Valid — ' . $days . ' days left</span>'),
+        };
     }
 
     /**
@@ -162,6 +257,8 @@ class EditUser extends EditRecord
             $this->record->rider->license_front = $data['rider']['license_front'];
             $this->record->rider->license_back = $data['rider']['license_back'];
             $this->record->rider->jpj_grant = $data['rider']['jpj_grant'];
+            $this->record->rider->license_expiry = $data['rider']['license_expiry'] ?? $this->record->rider->license_expiry;
+            $this->record->rider->jpj_grant_expiry = $data['rider']['jpj_grant_expiry'] ?? $this->record->rider->jpj_grant_expiry;
 
             $this->record->rider->status = $data['status'];
             $this->record->rider->rating = $data['rider']['rating'];
@@ -278,6 +375,8 @@ class EditUser extends EditRecord
             $data['rider']['license_front'] = $record->rider?->license_front;
             $data['rider']['license_back'] = $record->rider?->license_back;
             $data['rider']['jpj_grant'] = $record->rider?->jpj_grant;
+            $data['rider']['license_expiry'] = $record->rider?->license_expiry;
+            $data['rider']['jpj_grant_expiry'] = $record->rider?->jpj_grant_expiry;
 
             $data['rider']['rating'] = $record->rider?->rating;
 
@@ -622,9 +721,11 @@ class EditUser extends EditRecord
                                                         Select::make('status')
                                                             ->label('Status')
                                                             ->options([
-                                                                'active' => 'Active',
+                                                                'active' => 'Active (approved)',
+                                                                'onboarding' => 'Awaiting verification',
+                                                                'rejected' => 'Rejected / documents requested',
                                                                 'inactive' => 'Inactive',
-                                                                'pending' => 'Pending',
+                                                                'pending' => 'Pending (OTP not verified)',
                                                             ])
                                                             ->placeholder('Select Status')
                                                             ->required(),
@@ -768,8 +869,22 @@ class EditUser extends EditRecord
 
                         Tabs\Tab::make('Rider Verification')
                             ->schema([
+                                $this->resubmissionInfoSection(),
                                 Section::make('Rider Verification')
                                     ->schema([
+                                        Grid::make(2)
+                                            ->schema([
+                                                DatePicker::make('rider.license_expiry')
+                                                    ->label('Driving licence expiry')
+                                                    ->native(false)
+                                                    ->displayFormat('d M Y')
+                                                    ->helperText(fn ($state) => $this->expiryHint($state)),
+                                                DatePicker::make('rider.jpj_grant_expiry')
+                                                    ->label('JPJ grant / road tax expiry')
+                                                    ->native(false)
+                                                    ->displayFormat('d M Y')
+                                                    ->helperText(fn ($state) => $this->expiryHint($state)),
+                                            ]),
                                         Grid::make(2)
                                             ->schema([
                                                 FileUpload::make('rider.ic_front')
@@ -1009,9 +1124,11 @@ class EditUser extends EditRecord
                                                         Select::make('status')
                                                             ->label('Status')
                                                             ->options([
-                                                                'active' => 'Active',
+                                                                'active' => 'Active (approved)',
+                                                                'onboarding' => 'Awaiting verification',
+                                                                'rejected' => 'Rejected / documents requested',
                                                                 'inactive' => 'Inactive',
-                                                                'pending' => 'Pending',
+                                                                'pending' => 'Pending (OTP not verified)',
                                                             ])
                                                             ->required()
                                                             ->searchable()
@@ -1135,6 +1252,7 @@ class EditUser extends EditRecord
 
                         Tabs\Tab::make('Merchant Verification')
                             ->schema([
+                                $this->resubmissionInfoSection(),
                                 Section::make('Merchant Verification')
                                     ->schema([
                                         Grid::make(2)

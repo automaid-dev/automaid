@@ -53,6 +53,9 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail, Aud
         'email_verified_at',
         'status',
         'rejected_reason',
+        'rejection_details',
+        'resubmitted_at',
+        'resubmission_count',
         'is_active',
         'id_type',
         'icno',
@@ -88,6 +91,8 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail, Aud
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'dob' => 'date',
+            'rejection_details' => 'array',
+            'resubmitted_at' => 'datetime',
         ];
     }
 

@@ -1,0 +1,95 @@
+diff --git a/app/Services/PaymentGateway/GkashPaymentService.php b/app/Services/PaymentGateway/GkashPaymentService.php
+index 12666b1..b2c407e 100644
+--- a/app/Services/PaymentGateway/GkashPaymentService.php
++++ b/app/Services/PaymentGateway/GkashPaymentService.php
+@@ -12,6 +12,7 @@ class GkashPaymentService implements PaymentGatewayInterface
+     protected $merchantId;
+     protected $signatureKey;
+     protected $environment;
++    protected $terminalId;
+ 
+     public function __construct()
+     {
+@@ -22,6 +23,31 @@ public function __construct()
+                 : 'https://api-staging.pay.asia');
+         $this->merchantId = config('services.gkash.merchant_id');
+         $this->signatureKey = config('services.gkash.signature_key');
++        $this->terminalId = config('services.gkash.terminal_id');
++    }
++
++    /**
++     * Value for GKash's `paymentmethod` (comma-separated list shown on the
++     * hosted checkout page):
++     *   - subscriptions — card (ECOMM) only, since only a card can be
++     *     charged again for monthly renewal. Recognised by the
++     *     `recurringtype` or `channel => 'credit'` the subscription flows
++     *     already pass (the same hint that limits Fiuu to card).
++     *   - everything else (Wash & Fold / Dry Cleaning bookings, bags) —
++     *     eWallet, card and online banking.
++     * A caller can still force a value with $data['payment_methods'].
++     */
++    protected function paymentMethodsFor(array $data): ?string
++    {
++        if (!empty($data['payment_methods'])) {
++            return strtoupper((string) $data['payment_methods']);
++        }
++        $isSubscription = !empty($data['recurringtype']) || (($data['channel'] ?? null) === 'credit');
++        $value = $isSubscription
++            ? config('services.gkash.payment_methods_subscription', 'ECOMM')
++            : config('services.gkash.payment_methods_booking', 'EWALLET,ECOMM,EBANKING');
++        $value = strtoupper(preg_replace('/\s+/', '', (string) $value));
++        return $value !== '' ? $value : null;
+     }
+ 
+     /**
+@@ -75,6 +101,12 @@ public function createPaymentUrl(array $data): string
+         if (!empty($data['recurringtype'])) {
+             $payload['recurringtype'] = $data['recurringtype'];
+         }
++        if (!empty($this->terminalId)) {
++            $payload['TID'] = $this->terminalId;
++        }
++        if ($methods = $this->paymentMethodsFor($data)) {
++            $payload['paymentmethod'] = $methods;
++        }
+         $payload['signature'] = $this->buildRequestSignature($cartId, $amount, $currency);
+ 
+         // Logged unconditionally (not just on failure) — specifically
+@@ -89,6 +121,8 @@ public function createPaymentUrl(array $data): string
+             'cart_id' => $cartId,
+             'returnurl' => $payload['returnurl'],
+             'callbackurl' => $payload['callbackurl'],
++            'TID' => $payload['TID'] ?? null,
++            'paymentmethod' => $payload['paymentmethod'] ?? null,
+         ]);
+ 
+         // What the customer sees if GKash refuses or can't be reached.
+@@ -175,6 +209,9 @@ public function chargeRecurring(string $epkey, $amount, string $cartId, string $
+             // back "11 - Pending" (see SubscriptionRenewalService::handleGkashCallback).
+             'callbackurl' => route('webhook.gkash.notification'),
+         ];
++        if (!empty($this->terminalId)) {
++            $payload['TID'] = $this->terminalId;
++        }
+         $payload['signature'] = $this->buildRequestSignature($cartId, $amount, 'MYR');
+ 
+         // outcome:
+diff --git a/config/services.php b/config/services.php
+index c4eaec8..09dc108 100644
+--- a/config/services.php
++++ b/config/services.php
+@@ -90,6 +90,14 @@
+         'merchant_id' => env('GKASH_MERCHANT_ID'),
+         'signature_key' => env('GKASH_SIGNATURE_KEY'),
+         'environment' => env('GKASH_ENVIRONMENT', 'sandbox'),
++        // Terminal ID — sent as `TID` on every checkout and recurring charge.
++        'terminal_id' => env('GKASH_TERMINAL_ID'),
++        // Payment methods shown on GKash's checkout page (`paymentmethod`).
++        // Wash & Fold / Dry Cleaning bookings (and bag purchases):
++        'payment_methods_booking' => env('GKASH_PAYMENT_METHODS_BOOKING', 'EWALLET,ECOMM,EBANKING'),
++        // Subscriptions (sign-up, upgrade, card update): card only, because
++        // only a card can be charged again automatically every month.
++        'payment_methods_subscription' => env('GKASH_PAYMENT_METHODS_SUBSCRIPTION', 'ECOMM'),
+     ],
+ 
+     'telegram' => [

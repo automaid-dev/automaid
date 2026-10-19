@@ -12,6 +12,7 @@ class GkashPaymentService implements PaymentGatewayInterface
     protected $merchantId;
     protected $signatureKey;
     protected $environment;
+    protected $terminalId;
 
     public function __construct()
     {
@@ -22,6 +23,31 @@ class GkashPaymentService implements PaymentGatewayInterface
                 : 'https://api-staging.pay.asia');
         $this->merchantId = config('services.gkash.merchant_id');
         $this->signatureKey = config('services.gkash.signature_key');
+        $this->terminalId = config('services.gkash.terminal_id');
+    }
+
+    /**
+     * Value for GKash's `paymentmethod` (comma-separated list shown on the
+     * hosted checkout page):
+     *   - subscriptions — card (ECOMM) only, since only a card can be
+     *     charged again for monthly renewal. Recognised by the
+     *     `recurringtype` or `channel => 'credit'` the subscription flows
+     *     already pass (the same hint that limits Fiuu to card).
+     *   - everything else (Wash & Fold / Dry Cleaning bookings, bags) —
+     *     eWallet, card and online banking.
+     * A caller can still force a value with $data['payment_methods'].
+     */
+    protected function paymentMethodsFor(array $data): ?string
+    {
+        if (!empty($data['payment_methods'])) {
+            return strtoupper((string) $data['payment_methods']);
+        }
+        $isSubscription = !empty($data['recurringtype']) || (($data['channel'] ?? null) === 'credit');
+        $value = $isSubscription
+            ? config('services.gkash.payment_methods_subscription', 'ECOMM')
+            : config('services.gkash.payment_methods_booking', 'EWALLET,ECOMM,EBANKING');
+        $value = strtoupper(preg_replace('/\s+/', '', (string) $value));
+        return $value !== '' ? $value : null;
     }
 
     /**
@@ -75,6 +101,12 @@ class GkashPaymentService implements PaymentGatewayInterface
         if (!empty($data['recurringtype'])) {
             $payload['recurringtype'] = $data['recurringtype'];
         }
+        if (!empty($this->terminalId)) {
+            $payload['terminalID'] = $this->terminalId;
+        }
+        if ($methods = $this->paymentMethodsFor($data)) {
+            $payload['paymentmethod'] = $methods;
+        }
         $payload['signature'] = $this->buildRequestSignature($cartId, $amount, $currency);
 
         // Logged unconditionally (not just on failure) — specifically
@@ -89,6 +121,8 @@ class GkashPaymentService implements PaymentGatewayInterface
             'cart_id' => $cartId,
             'returnurl' => $payload['returnurl'],
             'callbackurl' => $payload['callbackurl'],
+            'terminalID' => $payload['terminalID'] ?? null,
+            'paymentmethod' => $payload['paymentmethod'] ?? null,
         ]);
 
         // What the customer sees if GKash refuses or can't be reached.
@@ -175,6 +209,9 @@ class GkashPaymentService implements PaymentGatewayInterface
             // back "11 - Pending" (see SubscriptionRenewalService::handleGkashCallback).
             'callbackurl' => route('webhook.gkash.notification'),
         ];
+        if (!empty($this->terminalId)) {
+            $payload['terminalID'] = $this->terminalId;
+        }
         $payload['signature'] = $this->buildRequestSignature($cartId, $amount, 'MYR');
 
         // outcome:

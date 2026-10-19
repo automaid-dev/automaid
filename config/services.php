@@ -90,6 +90,14 @@ return [
         'merchant_id' => env('GKASH_MERCHANT_ID'),
         'signature_key' => env('GKASH_SIGNATURE_KEY'),
         'environment' => env('GKASH_ENVIRONMENT', 'sandbox'),
+        // Terminal ID — sent as `terminalID` on every checkout and recurring charge.
+        'terminal_id' => env('GKASH_TERMINAL_ID'),
+        // Payment methods shown on GKash's checkout page (`paymentmethod`).
+        // Wash & Fold / Dry Cleaning bookings (and bag purchases):
+        'payment_methods_booking' => env('GKASH_PAYMENT_METHODS_BOOKING', 'EWALLET,ECOMM,EBANKING'),
+        // Subscriptions (sign-up, upgrade, card update): card only, because
+        // only a card can be charged again automatically every month.
+        'payment_methods_subscription' => env('GKASH_PAYMENT_METHODS_SUBSCRIPTION', 'ECOMM'),
     ],
 
     'telegram' => [

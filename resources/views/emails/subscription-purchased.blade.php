@@ -49,6 +49,12 @@
             <td class="first-column"><strong>Renew Date</strong></td>
             <td>{{ $order->subscription ? \Carbon\Carbon::parse($order->subscription->end_date)->format('F j, Y') : '' }}</td>            
         </tr>
+        @if ((float) ($order->gateway_fee ?? 0) > 0)
+        <tr>
+            <td class="first-column"><strong>Payment Gateway Service Charge (RM)</strong></td>
+            <td>{{ number_format($order->gateway_fee, 2) }}</td>
+        </tr>
+        @endif
         <tr>
             <td class="first-column"><strong>Total Amount (RM)</strong></td>
             <td>{{ number_format($order->grand_total, 2) }}</td>

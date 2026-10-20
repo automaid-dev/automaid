@@ -113,6 +113,12 @@
             <td class="first-column"><strong>SST (8%) (RM)</strong></td>
             <td>{{ number_format($order->tax_total, 2) }}</td>
         </tr>
+        @if ((float) ($order->gateway_fee ?? 0) > 0)
+        <tr>
+            <td class="first-column"><strong>Payment Gateway Service Charge (RM)</strong></td>
+            <td>{{ number_format($order->gateway_fee, 2) }}</td>
+        </tr>
+        @endif
         <tr>
             <td class="first-column"><strong>Total (RM)</strong></td>
             <td>{{ number_format($order->grand_total, 2) }}</td>

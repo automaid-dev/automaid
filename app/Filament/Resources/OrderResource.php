@@ -167,6 +167,11 @@ class OrderResource extends Resource
                     ->numeric(2)
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('gateway_fee')
+                    ->label('Gateway Charge (RM)')
+                    ->numeric(2)
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('booking.delivery_charge')
                     ->label('Delivery (RM)')
                     ->numeric(2)
@@ -282,7 +287,7 @@ class OrderResource extends Resource
                 'Order #', 'Order ID', 'Pickup Date', 'Customer', 'Status', 'Status Order',
                 'City', 'State', 'Rider', 'Merchant',
                 'Washing (RM)', 'Add-on (RM)', 'Insurance (RM)', 'Voucher (RM)', 'SST (RM)',
-                'Delivery (RM)', 'Grand Total (RM)', 'Rider Commission (RM)', 'Rider Payout',
+                'Delivery (RM)', 'Gateway Charge (RM)', 'Grand Total (RM)', 'Rider Commission (RM)', 'Rider Payout',
                 'Merchant Commission (RM)', 'Merchant Payout',
             ]);
             foreach ($orders as $order) {
@@ -314,6 +319,7 @@ class OrderResource extends Resource
                     number_format($order->discount ?? 0, 2),
                     number_format($order->tax_total ?? 0, 2),
                     number_format($order->booking->delivery_charge ?? 0, 2),
+                    number_format($order->gateway_fee ?? 0, 2),
                     number_format($order->grand_total ?? 0, 2),
                     number_format($riderCommission, 2),
                     $riderTxn ? ($riderTxn->status === \App\Models\CommissionTransaction::PAID ? 'Settled' : 'Pending') : '-',

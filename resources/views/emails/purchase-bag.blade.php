@@ -47,6 +47,12 @@
             <td class="first-column"><strong>Quantity</strong></td>
             <td>{{ $order->quantity }}</td>
         </tr>
+        @if ((float) ($order->gateway_fee ?? 0) > 0)
+        <tr>
+            <td class="first-column"><strong>Payment Gateway Service Charge (RM)</strong></td>
+            <td>{{ number_format($order->gateway_fee, 2) }}</td>
+        </tr>
+        @endif
         <tr>
             <td class="first-column"><strong>Total Amount (RM)</strong></td>
             <td>{{ number_format($order->grand_total, 2) }}</td>

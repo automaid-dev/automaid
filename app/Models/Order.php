@@ -532,6 +532,9 @@ class Order extends Model implements Auditable
     public function paymentUrlOrCancel(callable $createPaymentUrl): string
     {
         try {
+            // Payment gateway service charge (admin %, default 0) goes on
+            // top of the total before the gateway sees the amount.
+            \App\Support\GatewayFee::apply($this);
             return $createPaymentUrl();
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('Payment page could not be created; checkout cancelled', [

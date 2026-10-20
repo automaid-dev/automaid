@@ -323,6 +323,32 @@ class EditSetting extends EditRecord
                                                             ->native(false)
                                                             ->helperText('Existing subscribers keep recurring on whichever gateway they originally signed up under, even after this changes.'),
                                                     ]),
+                                                Grid::make(2)
+                                                    ->schema([
+                                                        TextInput::make('fiuu_service_charge_percent')
+                                                            ->label('Fiuu service charge')
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(10)
+                                                            ->step(0.01)
+                                                            ->suffix('%')
+                                                            ->default(0)
+                                                            ->required()
+                                                            ->helperText('Added to the customer\'s total when paying through Fiuu. 0 = no charge.'),
+                                                        TextInput::make('gkash_service_charge_percent')
+                                                            ->label('GKash service charge')
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(10)
+                                                            ->step(0.01)
+                                                            ->suffix('%')
+                                                            ->default(0)
+                                                            ->required()
+                                                            ->helperText('Added to the customer\'s total when paying through GKash. 0 = no charge.'),
+                                                    ]),
+                                                Placeholder::make('service_charge_note')
+                                                    ->label(false)
+                                                    ->content('Applies to bookings, dry cleaning, bag purchases, subscription sign-ups/upgrades and monthly renewals, as % of the final total (after voucher and SST). Shown to the customer as "Payment gateway service charge" before they pay. Note: Bank Negara Malaysia does not allow surcharges on debit/credit card payments — confirm with Fiuu/GKash before setting a rate above 0.'),
                                             ]),
 
                                     ]),

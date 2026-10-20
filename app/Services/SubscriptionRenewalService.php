@@ -80,12 +80,11 @@ class SubscriptionRenewalService
         }
 
         // Current plan price (so an upgrade is billed at the new price), not
-        // the original sign-up order's amount.
-        $setting = Setting::find(1);
-        $amount = $setting ? $subscription->planPrice($setting) : 0;
-        if ($amount < 1) {
-            $amount = (float) $order->grand_total; // fallback; Fiuu minimum is above RM1.00
-        }
+        // the original sign-up order's amount — plus the gateway service
+        // charge, if admin set one.
+        $amount = $this->currentPlanAmount($subscription, $order);
+        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'fiuu');
+        $amount = round($amount + $gatewayFee, 2);
 
         $attempt = $failed + 1;
         $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
@@ -93,8 +92,8 @@ class SubscriptionRenewalService
 
         if ($dryRun) {
             return ['action' => 'dry-run', 'message' => sprintf(
-                'Would charge RM%s (%s plan) on Fiuu account %s, reference %s, token ****%s.',
-                number_format($amount, 2), $subscription->plan_code ?? '-', $fiuu->getMerchantId(), $reference, substr($recurring->token, -4)
+                'Would charge RM%s (%s plan%s) on Fiuu account %s, reference %s, token ****%s.',
+                number_format($amount, 2), $subscription->plan_code ?? '-', $gatewayFee > 0 ? ', incl. RM' . number_format($gatewayFee, 2) . ' service charge' : '', $fiuu->getMerchantId(), $reference, substr($recurring->token, -4)
             )];
         }
 
@@ -109,6 +108,7 @@ class SubscriptionRenewalService
             'attempt' => $attempt,
             'plan_code' => $subscription->plan_code,
             'amount' => $amount,
+            'gateway_fee' => $gatewayFee,
             'status' => SubscriptionRenewalCharge::PENDING,
         ]);
 
@@ -173,13 +173,15 @@ class SubscriptionRenewalService
         }
 
         $amount = $this->currentPlanAmount($subscription, $order);
+        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'gkash');
+        $amount = round($amount + $gatewayFee, 2);
         $attempt = $failed + 1;
         $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
 
         if ($dryRun) {
             return ['action' => 'dry-run', 'message' => sprintf(
-                'Would charge RM%s (%s plan) on GKash, reference %s, card token %s…, for the cycle due %s.',
-                number_format($amount, 2), $subscription->plan_code ?? '-', $reference, substr($recurring->token, 0, 6), $cycle
+                'Would charge RM%s (%s plan%s) on GKash, reference %s, card token %s…, for the cycle due %s.',
+                number_format($amount, 2), $subscription->plan_code ?? '-', $gatewayFee > 0 ? ', incl. RM' . number_format($gatewayFee, 2) . ' service charge' : '', $reference, substr($recurring->token, 0, 6), $cycle
             )];
         }
 
@@ -196,6 +198,7 @@ class SubscriptionRenewalService
             'attempt' => $attempt,
             'plan_code' => $subscription->plan_code,
             'amount' => $amount,
+            'gateway_fee' => $gatewayFee,
             'status' => SubscriptionRenewalCharge::PENDING,
         ]);
 

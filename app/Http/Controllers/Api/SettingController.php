@@ -21,6 +21,9 @@ class SettingController extends Controller
                 'status' => true,
                 'message' => 'Successfully retrieved setting.',
                 'setting' => $setting,
+                // Gateway service charge % per payment type, for the
+                // app's payment summary (0 = no charge line).
+                'service_charge' => \App\Support\GatewayFee::forApp($setting),
             ]);
         } catch (\Throwable $th) {
             return response()->json([

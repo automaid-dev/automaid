@@ -1491,6 +1491,12 @@ class EditOrder extends EditRecord
                                             Placeholder::make('delivery_charge')->label(false)->content('RM ' . number_format($this->record->shipping_cost, 2)),
                                             Placeholder::make('label_sst')->label(false)->content('SST (8%)'),
                                             Placeholder::make('sst')->label(false)->content('RM ' . number_format($this->record->tax_total, 2)),
+                                            Placeholder::make('label_gateway_fee')->label(false)
+                                                ->content(fn () => \App\Support\GatewayFee::LABEL . ' (' . rtrim(rtrim(number_format((float) $this->record->gateway_fee_percent, 2), '0'), '.') . '%)')
+                                                ->visible(fn () => (float) ($this->record->gateway_fee ?? 0) > 0),
+                                            Placeholder::make('gateway_fee')->label(false)
+                                                ->content(fn () => 'RM ' . number_format((float) $this->record->gateway_fee, 2))
+                                                ->visible(fn () => (float) ($this->record->gateway_fee ?? 0) > 0),
 
                                             Placeholder::make('divider_total')
                                                 ->label(false)

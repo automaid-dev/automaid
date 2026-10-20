@@ -114,6 +114,9 @@
         @if ($booking?->tax)
             <div class="row"><span class="label">SST</span><span>RM{{ $booking->tax }}</span></div>
         @endif
+        @if ((float) ($order->gateway_fee ?? 0) > 0)
+            <div class="row"><span class="label">Payment gateway service charge</span><span>RM{{ number_format($order->gateway_fee, 2) }}</span></div>
+        @endif
 
         <hr>
 

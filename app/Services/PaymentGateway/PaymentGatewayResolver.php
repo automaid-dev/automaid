@@ -8,6 +8,7 @@ class PaymentGatewayResolver
 {
     const FIUU = 'fiuu';
     const GKASH = 'gkash';
+    const REVENUE_MONSTER = 'revenuemonster';
 
     /**
      * @param  string|null $gatewayCode 'fiuu' or 'gkash' — falls back
@@ -23,6 +24,7 @@ class PaymentGatewayResolver
     {
         return match ($gatewayCode) {
             self::GKASH => app(GkashPaymentService::class),
+            self::REVENUE_MONSTER => app(RevenueMonsterService::class),
             default => app(FiuuPaymentService::class),
         };
     }
@@ -35,8 +37,10 @@ class PaymentGatewayResolver
      */
     public function resolveForSubscription(?string $gatewayCode): PaymentGatewayInterface
     {
-        return $gatewayCode === self::GKASH
-            ? app(GkashPaymentService::class)
-            : FiuuPaymentService::recurring();
+        return match ($gatewayCode) {
+            self::GKASH => app(GkashPaymentService::class),
+            self::REVENUE_MONSTER => app(RevenueMonsterService::class),
+            default => FiuuPaymentService::recurring(),
+        };
     }
 }

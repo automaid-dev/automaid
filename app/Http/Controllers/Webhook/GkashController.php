@@ -172,6 +172,17 @@ class GkashController extends Controller
             return response('OK', 200);
         }
 
+        return $this->completePaidOrder($order, $data);
+    }
+
+    /**
+     * Marks a paid booking / dry-cleaning / bag order as paid and runs
+     * everything that follows (transaction, statuses, emails, job
+     * assignment). Also used by RevenueMonsterController, which passes its
+     * own payment method and channel.
+     */
+    public function completePaidOrder(Order $order, array $data, string $paymentMethod = Payment::GKASH, ?string $channel = null)
+    {
         $payment = $order->payment;
         $bag = $order->bag;
         $order_booking = $order->order_booking;
@@ -189,11 +200,11 @@ class GkashController extends Controller
 
         // update payment status
         $payment->data = json_encode($data);
-        $payment->payment_method = Payment::GKASH;
+        $payment->payment_method = $paymentMethod;
         $payment->status = Payment::PAID;
         // Field name confirmed from the docs' callback example —
         // `PaymentType` (capital P and T), not `payment_type`.
-        $payment->channel = $data['PaymentType'] ?? null;
+        $payment->channel = $channel ?? ($data['PaymentType'] ?? null);
         $payment->is_paid = true;
         $payment->paid_at = now();
         $payment->save();
@@ -389,7 +400,7 @@ class GkashController extends Controller
      * @param  array<string, mixed> $data
      * @return \Illuminate\Http\Response
      */
-    protected function handleSubscriptionCheckout(Order $order, array $data)
+    public function handleSubscriptionCheckout(Order $order, array $data, string $paymentMethod = Payment::GKASH, ?string $token = null, ?string $channel = null)
     {
         $payment = $order->payment;
         $subscription = $order->subscription;
@@ -410,9 +421,9 @@ class GkashController extends Controller
         );
 
         $payment->data = json_encode($data);
-        $payment->payment_method = Payment::GKASH;
+        $payment->payment_method = $paymentMethod;
         $payment->status = Payment::PAID;
-        $payment->channel = $data['PaymentType'] ?? null;
+        $payment->channel = $channel ?? ($data['PaymentType'] ?? null);
         $payment->is_paid = true;
         $payment->paid_at = now();
         $payment->save();
@@ -427,7 +438,7 @@ class GkashController extends Controller
         // GkashPaymentService::chargeRecurring's docblock: this
         // rotates on every use, so this initial value is only ever
         // used for the FIRST renewal charge.
-        $epkey = $data['epkey'] ?? null;
+        $epkey = $token ?? ($data['epkey'] ?? null);
         if ($epkey) {
             \App\Models\PaymentRecurring::firstOrCreate(
                 ['payment_id' => $payment->id, 'subscription_id' => $subscription->id],

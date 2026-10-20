@@ -18,6 +18,7 @@ class Payment extends Model implements Auditable
     const FIUU = 'fiuu';
     const FIUU_RECURRING = 'fiuu-recurring';
     const GKASH = 'gkash';
+    const REVENUE_MONSTER = 'revenuemonster';
 
     const PENDING = 'pending';
     const PAID = 'paid';

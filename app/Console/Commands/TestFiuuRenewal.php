@@ -42,7 +42,7 @@ class TestFiuuRenewal extends Command
             return self::SUCCESS;
         }
 
-        if ($subscription->payment_gateway === 'gkash') {
+        if (in_array($subscription->payment_gateway, ['gkash', 'revenuemonster'], true)) {
             $this->error('This subscription is on GKash; this command only tests Fiuu.');
             return self::FAILURE;
         }

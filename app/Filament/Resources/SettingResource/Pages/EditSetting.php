@@ -294,6 +294,7 @@ class EditSetting extends EditRecord
                                                             ->options([
                                                                 'fiuu' => 'Fiuu',
                                                                 'gkash' => 'GKash',
+                                                                'revenuemonster' => 'Revenue Monster',
                                                             ])
                                                             ->required()
                                                             ->native(false),
@@ -302,6 +303,7 @@ class EditSetting extends EditRecord
                                                             ->options([
                                                                 'fiuu' => 'Fiuu',
                                                                 'gkash' => 'GKash',
+                                                                'revenuemonster' => 'Revenue Monster',
                                                             ])
                                                             ->required()
                                                             ->native(false),
@@ -310,6 +312,7 @@ class EditSetting extends EditRecord
                                                             ->options([
                                                                 'fiuu' => 'Fiuu',
                                                                 'gkash' => 'GKash',
+                                                                'revenuemonster' => 'Revenue Monster',
                                                             ])
                                                             ->required()
                                                             ->native(false),
@@ -318,12 +321,13 @@ class EditSetting extends EditRecord
                                                             ->options([
                                                                 'fiuu' => 'Fiuu',
                                                                 'gkash' => 'GKash',
+                                                                'revenuemonster' => 'Revenue Monster',
                                                             ])
                                                             ->required()
                                                             ->native(false)
                                                             ->helperText('Existing subscribers keep recurring on whichever gateway they originally signed up under, even after this changes.'),
                                                     ]),
-                                                Grid::make(2)
+                                                Grid::make(3)
                                                     ->schema([
                                                         TextInput::make('fiuu_service_charge_percent')
                                                             ->label('Fiuu service charge')
@@ -345,6 +349,16 @@ class EditSetting extends EditRecord
                                                             ->default(0)
                                                             ->required()
                                                             ->helperText('Added to the customer\'s total when paying through GKash. 0 = no charge.'),
+                                                        TextInput::make('revenuemonster_service_charge_percent')
+                                                            ->label('Revenue Monster service charge')
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(10)
+                                                            ->step(0.01)
+                                                            ->suffix('%')
+                                                            ->default(0)
+                                                            ->required()
+                                                            ->helperText('Added to the customer\'s total when paying through Revenue Monster. 0 = no charge.'),
                                                     ]),
                                                 Placeholder::make('service_charge_note')
                                                     ->label(false)

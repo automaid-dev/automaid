@@ -89,7 +89,7 @@ class TransactionResource extends Resource
                     ->badge()
                     ->state(fn (Transaction $record): string => $record->gatewayCode())
                     ->formatStateUsing(fn (string $state): string => Transaction::gatewayLabel($state))
-                    ->color(fn (string $state): string => $state === 'gkash' ? 'warning' : 'info'),
+                    ->color(fn (string $state): string => match ($state) { 'gkash' => 'warning', 'revenuemonster' => 'success', default => 'info' }),
                 TextColumn::make('amount')
                     ->label('Total Amount (RM)')
                     ->searchable()
@@ -116,7 +116,7 @@ class TransactionResource extends Resource
                     ->placeholder('All Types')
                     ->label(false),
                 SelectFilter::make('gateway')
-                    ->options(['fiuu' => 'Fiuu', 'gkash' => 'GKash'])
+                    ->options(['fiuu' => 'Fiuu', 'gkash' => 'GKash', 'revenuemonster' => 'Revenue Monster'])
                     ->placeholder('All Gateways')
                     ->label(false)
                     ->query(fn ($query, array $data) => filled($data['value'] ?? null)

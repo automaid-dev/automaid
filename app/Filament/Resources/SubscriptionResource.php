@@ -97,7 +97,7 @@ class SubscriptionResource extends Resource
                         if (!$record->recurring_active) {
                             return 'No card on file — will not auto-renew';
                         }
-                        $gateway = $record->payment_gateway === 'gkash' ? 'GKash' : 'Fiuu';
+                        $gateway = \App\Models\Transaction::gatewayLabel($record->payment_gateway);
                         if ($record->has_pending_charge) {
                             return "{$gateway} charge pending — check renewal";
                         }
@@ -184,7 +184,7 @@ class SubscriptionResource extends Resource
                     $sub->user->email ?? '-',
                     $sub->user->mobile_no ?? '-',
                     $sub->plan_code ? Subscription::planLabel($sub->plan_code) : '-',
-                    $sub->payment_gateway === 'gkash' ? 'GKash' : 'Fiuu',
+                    \App\Models\Transaction::gatewayLabel($sub->payment_gateway),
                     ucfirst((string) $sub->status),
                     optional($sub->created_at)->format('Y-m-d H:i'),
                     $sub->start_date ? \Carbon\Carbon::parse($sub->start_date)->format('Y-m-d') : '-',

@@ -34,6 +34,8 @@ return Application::configure(basePath: dirname(__DIR__))
             // rejected the request before it ever reached the
             // controller.
             '/webhook/gkash/*',
+            // Revenue Monster's server-to-server notify (and its return page).
+            '/webhook/rm/*',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

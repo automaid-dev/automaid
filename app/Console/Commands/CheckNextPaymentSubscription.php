@@ -13,7 +13,7 @@ class CheckNextPaymentSubscription extends Command
 {
     protected $signature = 'automaid:check-next-payment-subscription {--dry-run : Show what would be charged without charging}';
 
-    protected $description = 'Charge subscriptions whose next payment date has arrived (GKash and Fiuu)';
+    protected $description = 'Charge subscriptions whose next payment date has arrived (GKash, Fiuu and Revenue Monster)';
 
     /**
      * Picks up every active subscription whose next payment date is today
@@ -50,12 +50,14 @@ class CheckNextPaymentSubscription extends Command
 
         foreach ($recurrings as $recurring) {
             $subscription = $recurring->subscription;
-            $gateway = $subscription->payment_gateway === 'gkash' ? 'gkash' : 'fiuu';
+            $gateway = in_array($subscription->payment_gateway, ['gkash', 'revenuemonster'], true) ? $subscription->payment_gateway : 'fiuu';
 
             try {
-                $result = $gateway === 'gkash'
-                    ? $service->chargeGkash($recurring, $dryRun)
-                    : $service->chargeFiuu($recurring, $dryRun);
+                $result = match ($gateway) {
+                    'gkash' => $service->chargeGkash($recurring, $dryRun),
+                    'revenuemonster' => $service->chargeRevenueMonster($recurring, $dryRun),
+                    default => $service->chargeFiuu($recurring, $dryRun),
+                };
                 $this->line("Subscription #{$subscription->id} [{$gateway}] [{$result['action']}] {$result['message']}");
             } catch (\Throwable $e) {
                 Log::error('Subscription renewal crashed', ['subscription_id' => $subscription->id, 'gateway' => $gateway, 'error' => $e->getMessage()]);

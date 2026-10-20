@@ -233,6 +233,97 @@ class SubscriptionRenewalService
     }
 
     /**
+     * Revenue Monster monthly charge on the bound card (token = RM customer
+     * ID). Same rules as GKash: paid extends, failed retries (max 3, customer
+     * notified), and an unknown result is left pending — never re-charged
+     * until an admin settles it with automaid:rm-test-renewal --resolve.
+     *
+     * @return array{action: string, message: string, charge_id?: int}
+     */
+    public function chargeRevenueMonster(PaymentRecurring $recurring, bool $dryRun = false): array
+    {
+        $subscription = $recurring->subscription;
+        $order = $recurring->payment?->order;
+        $user = $order?->user;
+        if (!$subscription || !$order || !$user || !$recurring->token) {
+            return ['action' => 'skipped', 'message' => 'Missing subscription, order, user or card token.'];
+        }
+
+        $cycle = Carbon::parse($recurring->next_payment_date)->toDateString();
+        $charges = SubscriptionRenewalCharge::where('subscription_id', $subscription->id)->whereDate('cycle_date', $cycle)->get();
+        if ($charges->contains('status', SubscriptionRenewalCharge::PAID)) {
+            return ['action' => 'skipped', 'message' => "Cycle {$cycle} already paid."];
+        }
+        $open = $charges->first(fn ($c) => in_array($c->status, [SubscriptionRenewalCharge::PENDING, SubscriptionRenewalCharge::ACCEPTED], true));
+        if ($open) {
+            return ['action' => 'skipped', 'message' => "Charge {$open->reference} is still pending at Revenue Monster (since {$open->created_at}). Check the RM merchant portal, then run: php artisan automaid:rm-test-renewal {$subscription->id} --resolve={$open->reference} --as=paid|failed"];
+        }
+        $failed = $charges->where('status', SubscriptionRenewalCharge::FAILED)->count();
+        if ($failed >= SubscriptionRenewalCharge::MAX_ATTEMPTS) {
+            return ['action' => 'skipped', 'message' => "Gave up on cycle {$cycle} after {$failed} failed attempts."];
+        }
+
+        $amount = $this->currentPlanAmount($subscription, $order);
+        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'revenuemonster');
+        $amount = round($amount + $gatewayFee, 2);
+        $attempt = $failed + 1;
+        $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
+
+        if ($dryRun) {
+            return ['action' => 'dry-run', 'message' => sprintf(
+                'Would charge RM%s (%s plan%s) on Revenue Monster, reference %s, customer %s, for the cycle due %s.',
+                number_format($amount, 2), $subscription->plan_code ?? '-', $gatewayFee > 0 ? ', incl. RM' . number_format($gatewayFee, 2) . ' service charge' : '',
+                $reference, $recurring->token, $cycle
+            )];
+        }
+
+        $charge = SubscriptionRenewalCharge::create([
+            'subscription_id' => $subscription->id,
+            'payment_recurring_id' => $recurring->id,
+            'order_id' => $order->id,
+            'gateway' => 'revenuemonster',
+            'merchant_id' => config('services.revenuemonster.store_id'),
+            'reference' => $reference,
+            'cycle_date' => $cycle,
+            'attempt' => $attempt,
+            'plan_code' => $subscription->plan_code,
+            'amount' => $amount,
+            'gateway_fee' => $gatewayFee,
+            'status' => SubscriptionRenewalCharge::PENDING,
+        ]);
+
+        $result = (new \App\Services\PaymentGateway\RevenueMonsterService())->chargeCustomer(
+            $recurring->token,
+            $amount,
+            'AutoMaid ' . ucfirst((string) $subscription->plan_code) . ' plan',
+            'Subscription renewal ' . $reference
+        );
+        $charge->request_response = json_encode($result['raw']);
+        $charge->tran_id = $result['transaction_id'];
+        $charge->save();
+
+        if ($result['outcome'] === 'paid') {
+            $this->markPaid($charge, $result['raw']);
+            return ['action' => 'paid', 'message' => 'Charged RM' . number_format($amount, 2) . " ({$reference}, transaction {$charge->tran_id}).", 'charge_id' => $charge->id];
+        }
+        $reason = $result['reason'] ?: 'Charge not successful';
+        if ($result['outcome'] === 'failed') {
+            $this->markFailed($charge, $reason);
+            return ['action' => 'failed', 'message' => "Charge {$reference} failed: {$reason}", 'charge_id' => $charge->id];
+        }
+        $charge->reason = mb_substr($reason, 0, 300);
+        $charge->save();
+        $this->notifyAdmin(
+            'Subscription renewal pending at Revenue Monster',
+            "Subscription #{$subscription->id} (user #{$user->id}, {$user->email}): charge {$reference} for RM" . number_format($amount, 2)
+            . " came back as \"{$reason}\". The customer may or may not have been charged, so it will not be retried automatically.\n"
+            . "Check the Revenue Monster merchant portal, then run on the server:\n"
+            . "php artisan automaid:rm-test-renewal {$subscription->id} --resolve={$reference} --as=paid   (or --as=failed)"
+        );
+        return ['action' => 'pending', 'message' => "Charge {$reference} is pending at Revenue Monster ({$reason}); admin alerted, not retrying.", 'charge_id' => $charge->id];
+    }
+
+    /**
      * GKash callback for a renewal charge (cartid "SR..."), e.g. the final
      * result of a charge that first came back "11 - Pending". The caller
      * has already verified the signature. Safe to receive more than once.

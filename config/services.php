@@ -100,6 +100,22 @@ return [
         'payment_methods_subscription' => env('GKASH_PAYMENT_METHODS_SUBSCRIPTION', 'ECOMM'),
     ],
 
+    // Revenue Monster (open.revenuemonster.my). Keys: either a file path
+    // (RM_PRIVATE_KEY_PATH / RM_PUBLIC_KEY_PATH, kept outside the web root)
+    // or the PEM text itself (RM_PRIVATE_KEY / RM_PUBLIC_KEY, "\n" for new lines).
+    'revenuemonster' => [
+        'environment' => env('RM_ENVIRONMENT', 'production'), // production | sandbox
+        'client_id' => env('RM_CLIENT_ID'),
+        'client_secret' => env('RM_CLIENT_SECRET'),
+        'store_id' => env('RM_STORE_ID'),
+        'private_key' => env('RM_PRIVATE_KEY'),
+        'private_key_path' => env('RM_PRIVATE_KEY_PATH'),
+        'public_key' => env('RM_PUBLIC_KEY'),
+        'public_key_path' => env('RM_PUBLIC_KEY_PATH'),
+        // Booking checkout methods; empty = every method enabled on the account.
+        'methods' => env('RM_PAYMENT_METHODS', ''),
+    ],
+
     'telegram' => [
         // Create a bot via @BotFather on Telegram (free, ~2 minutes),
         // add it to whichever group/chat admin actually watches, then

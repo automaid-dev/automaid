@@ -61,40 +61,48 @@ class Transaction extends Model implements Auditable
     }
 
     /**
-     * Which gateway took this payment: 'gkash' or 'fiuu'.
+     * Which gateway took this payment: 'fiuu', 'gkash' or 'revenuemonster'.
      *
-     * payments.payment_method is set by each gateway's callback ('gkash',
-     * 'fiuu', 'fiuu-recurring'). Renewals point at the original sign-up
-     * payment, which is on the same gateway the subscription is locked to.
-     * Rows with no method predate GKash, so they were Fiuu.
+     * payments.payment_method is set by each gateway's callback. Renewals
+     * point at the original sign-up payment, which is on the same gateway
+     * the subscription is locked to. Rows with no method predate GKash and
+     * Revenue Monster, so they were Fiuu (unless the order says otherwise).
      */
     public function gatewayCode(): string
     {
         $method = $this->payment?->payment_method;
-        if ($method === Payment::GKASH) {
-            return 'gkash';
+        if ($method === Payment::GKASH || $method === Payment::REVENUE_MONSTER) {
+            return $method;
         }
         if ($method === Payment::FIUU || $method === Payment::FIUU_RECURRING) {
             return 'fiuu';
         }
-        return $this->order?->payment_gateway === 'gkash' ? 'gkash' : 'fiuu';
+        $gw = $this->order?->payment_gateway;
+        return in_array($gw, ['gkash', 'revenuemonster'], true) ? $gw : 'fiuu';
     }
 
-    public static function gatewayLabel(string $code): string
+    public static function gatewayLabel(?string $code): string
     {
-        return $code === 'gkash' ? 'GKash' : 'Fiuu';
+        return match ($code) {
+            'gkash' => 'GKash',
+            'revenuemonster' => 'Revenue Monster',
+            default => 'Fiuu',
+        };
     }
 
-    /** Filter helper: transactions taken by $code ('gkash' or 'fiuu'). */
+    /** Filter helper: transactions taken by $code ('fiuu', 'gkash', 'revenuemonster'). */
     public function scopeGateway($query, string $code)
     {
-        $isGkash = fn ($q) => $q
-            ->whereHas('payment', fn ($p) => $p->where('payment_method', Payment::GKASH))
+        $by = fn (string $gw, string $method) => fn ($q) => $q
+            ->whereHas('payment', fn ($p) => $p->where('payment_method', $method))
             ->orWhere(fn ($q2) => $q2
                 ->whereDoesntHave('payment', fn ($p) => $p->whereNotNull('payment_method'))
-                ->whereHas('order', fn ($o) => $o->where('payment_gateway', 'gkash')));
+                ->whereHas('order', fn ($o) => $o->where('payment_gateway', $gw)));
 
-        return $code === 'gkash' ? $query->where($isGkash) : $query->whereNot($isGkash);
+        if ($code === 'gkash' || $code === 'revenuemonster') {
+            return $query->where($by($code, $code));
+        }
+        return $query->whereNot($by('gkash', Payment::GKASH))->whereNot($by('revenuemonster', Payment::REVENUE_MONSTER));
     }
 
 }

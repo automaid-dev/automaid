@@ -27,7 +27,7 @@ class GatewayFee
         if (!$setting) {
             return 0.0;
         }
-        $column = ($gateway === 'gkash' ? 'gkash' : 'fiuu') . '_service_charge_percent';
+        $column = (in_array($gateway, ['gkash', 'revenuemonster'], true) ? $gateway : 'fiuu') . '_service_charge_percent';
         return max(0.0, (float) ($setting->$column ?? 0));
     }
 

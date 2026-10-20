@@ -34,6 +34,11 @@ Route::group([
     Route::post('/gkash/return', [GkashController::class, 'getReturn'])->name('gkash.return');
     Route::post('/gkash/notification', [GkashController::class, 'getNotification'])->name('gkash.notification');
     Route::get('/gkash/checkout-form/{orderid}', [GkashController::class, 'getCheckoutForm'])->name('gkash.checkout-form');
+
+    // Revenue Monster
+    Route::match(['get', 'post'], '/rm/return/{order}', [\App\Http\Controllers\Webhook\RevenueMonsterController::class, 'getReturn'])->name('rm.return');
+    Route::post('/rm/notify', [\App\Http\Controllers\Webhook\RevenueMonsterController::class, 'notify'])->name('rm.notify');
+    Route::get('/rm/bind/{order}/{key}', [\App\Http\Controllers\Webhook\RevenueMonsterController::class, 'bindReturn'])->name('rm.bind');
 });
 
 // Subscription card checkout: auto-posts to Fiuu's seamless card form

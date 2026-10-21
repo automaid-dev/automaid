@@ -25,12 +25,15 @@ class SubscriptionPlanController extends Controller
     {
         try {
             $setting = Setting::find(1);
+            $freeBags = (int) ($setting->total_bag_free_wash ?? 1);
 
             $plans = [
                 [
                     'code' => Subscription::BRONZE,
                     'name' => Subscription::planLabel(Subscription::BRONZE),
                     'price' => (float) ($setting->subscription_bronze_price ?? 0),
+                    'dryclean_discount_percent' => (float) ($setting->subscription_bronze_dryclean_discount ?? 0),
+                    'free_bag_wash_per_order' => $freeBags,
                     'order_quota' => $setting->subscription_bronze_orders !== null
                         ? (int) $setting->subscription_bronze_orders
                         : null,
@@ -39,6 +42,8 @@ class SubscriptionPlanController extends Controller
                     'code' => Subscription::SILVER,
                     'name' => Subscription::planLabel(Subscription::SILVER),
                     'price' => (float) ($setting->subscription_silver_price ?? 0),
+                    'dryclean_discount_percent' => (float) ($setting->subscription_silver_dryclean_discount ?? 0),
+                    'free_bag_wash_per_order' => $freeBags,
                     'order_quota' => $setting->subscription_silver_orders !== null
                         ? (int) $setting->subscription_silver_orders
                         : null,
@@ -47,6 +52,8 @@ class SubscriptionPlanController extends Controller
                     'code' => Subscription::PLATINUM,
                     'name' => Subscription::planLabel(Subscription::PLATINUM),
                     'price' => (float) ($setting->subscription_platinum_price ?? 0),
+                    'dryclean_discount_percent' => (float) ($setting->subscription_platinum_dryclean_discount ?? 0),
+                    'free_bag_wash_per_order' => $freeBags,
                     'order_quota' => null, // unlimited
                 ],
             ];
@@ -61,7 +68,7 @@ class SubscriptionPlanController extends Controller
                     // additional bags are charged wash_fee + delivery_price
                     // each. Surfaced here so the app doesn't need a second call
                     // to /setting just to show this on the plan picker.
-                    'free_bag_wash' => (int) ($setting->total_bag_free_wash ?? 1),
+                    'free_bag_wash' => $freeBags,
                     'free_bag_delivery' => (int) ($setting->total_bag_free_delivery ?? 1),
                 ],
             ]);

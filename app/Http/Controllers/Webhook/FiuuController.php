@@ -710,6 +710,7 @@ class FiuuController extends Controller
                         // billing cycle rather than carrying over usage
                         // counted against the old, lower-quota plan.
                         $existing_subscription->plan_code = $order->upgrade_to_plan_code;
+                        $existing_subscription->scheduled_plan_code = null; // an upgrade replaces any scheduled downgrade
                         $existing_subscription->orders_used_current_cycle = 0;
                         $existing_subscription->save();
 
@@ -1240,6 +1241,7 @@ class FiuuController extends Controller
                         // billing cycle rather than carrying over usage
                         // counted against the old, lower-quota plan.
                         $existing_subscription->plan_code = $order->upgrade_to_plan_code;
+                        $existing_subscription->scheduled_plan_code = null; // an upgrade replaces any scheduled downgrade
                         $existing_subscription->orders_used_current_cycle = 0;
                         $existing_subscription->save();
 

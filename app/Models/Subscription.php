@@ -98,7 +98,13 @@ class Subscription extends Model implements Auditable
      */
     public function planPrice(Setting $setting): float
     {
-        return (float) match ($this->plan_code) {
+        return self::priceForPlan($setting, $this->plan_code);
+    }
+
+    /** Monthly price of any plan code, from Settings. */
+    public static function priceForPlan(Setting $setting, ?string $code): float
+    {
+        return (float) match ($code) {
             self::BRONZE => $setting->subscription_bronze_price,
             self::SILVER => $setting->subscription_silver_price,
             self::PLATINUM => $setting->subscription_platinum_price,

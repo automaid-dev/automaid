@@ -306,10 +306,26 @@ class SubscriptionController extends Controller
                 default => 0,
             };
 
-            if ($newPrice <= $currentPrice) {
+            // Downgrade: nothing charged now — the lower plan (and price)
+            // starts from the next renewal; the customer keeps the current
+            // plan until then. Can be undone with /subscription/scheduled/cancel.
+            if ($newPrice < $currentPrice) {
+                $effective = (new \App\Services\SubscriptionPlanChangeService())->scheduleDowngrade($subscription, $request->plan_code);
+                $label = Subscription::planLabel($request->plan_code);
+                return response()->json([
+                    'status' => true,
+                    'data' => [
+                        'scheduled' => true,
+                        'plan_code' => $request->plan_code,
+                        'effective_date' => $effective?->toDateString(),
+                    ],
+                    'message' => "Your plan will change to {$label}" . ($effective ? ' on ' . $effective->format('j M Y') : ' at your next renewal') . '. You keep your current plan until then.',
+                ], 200);
+            }
+            if ($newPrice == $currentPrice) {
                 return response()->json([
                     'status' => false,
-                    'message' => 'Please choose a higher-tier plan — downgrades are not supported here.',
+                    'message' => 'Please choose a different plan.',
                 ]);
             }
 
@@ -363,6 +379,24 @@ class SubscriptionController extends Controller
             // to a different gateway mid-lifecycle.
             $order->payment_gateway = $subscription->payment_gateway;
             $order->save();
+
+            // GKash / Revenue Monster: charge the saved card directly — the
+            // app opens a short result page that runs the charge (no card
+            // entry). Fiuu keeps its card checkout below.
+            if (in_array($subscription->payment_gateway, \App\Services\SubscriptionPlanChangeService::TOKEN_GATEWAYS, true)
+                && $subscription->recurring_active?->token) {
+                \App\Support\GatewayFee::apply($order);
+                $prefix = $subscription->payment_gateway === 'gkash' ? 'webhook.gkash.plan' : 'webhook.rm.plan';
+                $data['url'] = route($prefix, ['order' => $order->id, 'key' => \App\Services\SubscriptionPlanChangeService::resultKey($order->id)]);
+                $data['order_id'] = $order->id;
+                $data['topup_amount'] = $topup;
+                $data['saved_card'] = true;
+                return response()->json([
+                    'status' => true,
+                    'data' => $data,
+                    'message' => 'Confirm to charge your saved card.',
+                ], 200);
+            }
 
             $rms = (new \App\Services\PaymentGateway\PaymentGatewayResolver())->resolveForSubscription($subscription->payment_gateway);
             $paymentUrl = $order->paymentUrlOrCancel(fn () => $rms->createPaymentUrl([
@@ -616,6 +650,20 @@ class SubscriptionController extends Controller
      * @param  Request $request [description]
      * @return [type]           [description]
      */
+    /**
+     * POST /customer/subscription/scheduled/cancel — keep the current plan
+     * (drops a downgrade scheduled for the next renewal).
+     */
+    public function cancelScheduledChange(Request $request)
+    {
+        $subscription = auth('sanctum')->user()?->subscribe;
+        if (!$subscription || !$subscription->scheduled_plan_code) {
+            return response()->json(['status' => false, 'message' => 'There is no scheduled plan change.']);
+        }
+        (new \App\Services\SubscriptionPlanChangeService())->cancelScheduled($subscription);
+        return response()->json(['status' => true, 'message' => 'You will stay on your current plan.']);
+    }
+
     public function cancelSubscription(Request $request)
     {
         try {

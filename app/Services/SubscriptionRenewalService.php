@@ -106,7 +106,7 @@ class SubscriptionRenewalService
             'reference' => $reference,
             'cycle_date' => $cycle,
             'attempt' => $attempt,
-            'plan_code' => $subscription->plan_code,
+            'plan_code' => $this->cyclePlanCode($subscription),
             'amount' => $amount,
             'gateway_fee' => $gatewayFee,
             'status' => SubscriptionRenewalCharge::PENDING,
@@ -196,7 +196,7 @@ class SubscriptionRenewalService
             'reference' => $reference,
             'cycle_date' => $cycle,
             'attempt' => $attempt,
-            'plan_code' => $subscription->plan_code,
+            'plan_code' => $this->cyclePlanCode($subscription),
             'amount' => $amount,
             'gateway_fee' => $gatewayFee,
             'status' => SubscriptionRenewalCharge::PENDING,
@@ -286,7 +286,7 @@ class SubscriptionRenewalService
             'reference' => $reference,
             'cycle_date' => $cycle,
             'attempt' => $attempt,
-            'plan_code' => $subscription->plan_code,
+            'plan_code' => $this->cyclePlanCode($subscription),
             'amount' => $amount,
             'gateway_fee' => $gatewayFee,
             'status' => SubscriptionRenewalCharge::PENDING,
@@ -377,11 +377,21 @@ class SubscriptionRenewalService
         return "Marked {$charge->reference} as FAILED; the customer was notified and tomorrow's run will retry (if attempts remain).";
     }
 
-    /** Current plan price (so an upgrade is billed at the new price), not the sign-up order's amount. */
+    /**
+     * The plan this renewal is for: a downgrade the customer scheduled
+     * (subscriptions.scheduled_plan_code) takes effect from this cycle,
+     * otherwise the current plan.
+     */
+    protected function cyclePlanCode(Subscription $subscription): ?string
+    {
+        return $subscription->scheduled_plan_code ?: $subscription->plan_code;
+    }
+
+    /** Price of the plan for this cycle (so upgrades/downgrades bill the right amount), not the sign-up order's amount. */
     protected function currentPlanAmount(Subscription $subscription, $order): float
     {
         $setting = Setting::find(1);
-        $amount = $setting ? $subscription->planPrice($setting) : 0;
+        $amount = $setting ? Subscription::priceForPlan($setting, $this->cyclePlanCode($subscription)) : 0;
         return $amount >= 1 ? (float) $amount : (float) $order->grand_total;
     }
 
@@ -507,6 +517,11 @@ class SubscriptionRenewalService
             $recurring->save();
 
             $subscription->status = Subscription::ACTIVE;
+            // Scheduled downgrade starts with the cycle that was just paid.
+            if ($subscription->scheduled_plan_code && $charge->plan_code === $subscription->scheduled_plan_code) {
+                $subscription->plan_code = $subscription->scheduled_plan_code;
+                $subscription->scheduled_plan_code = null;
+            }
             $subscription->end_date = $next;
             $subscription->renew_at = $next;
             $subscription->orders_used_current_cycle = 0;

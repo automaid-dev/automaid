@@ -164,11 +164,19 @@ class GkashController extends Controller
             Order::SUBSCRIPTION_UPDATE,
             Order::SUBSCRIPTION_UPGRADE,
         ])) {
-            // Renewal charges are routed to SubscriptionRenewalService
-            // above (cartid "SR..."). Update/upgrade checkouts for an
-            // already-GKash subscription would land here in principle,
-            // but re-tokenizing mid-lifecycle isn't handled yet.
-            Log::error('GKash webhook received a subscription update/upgrade order — not yet supported.', ['order_id' => $order->id]);
+            // Upgrade charged on the saved card (SubscriptionPlanChangeService)
+            // — this callback settles one whose first reply was "pending".
+            if ($order->order_type === Order::SUBSCRIPTION_UPGRADE) {
+                if ($order->status !== Order::PAID) {
+                    if (!empty($data['epkey']) && ($recurring = $order->user?->subscribe?->recurring_active)) {
+                        $recurring->token = $data['epkey'];
+                        $recurring->save();
+                    }
+                    (new \App\Services\SubscriptionPlanChangeService())->completeUpgrade($order, $data, Payment::GKASH, $data['PaymentType'] ?? null);
+                }
+                return response('OK', 200);
+            }
+            Log::error('GKash webhook received a subscription update/renewal checkout — not supported.', ['order_id' => $order->id]);
             return response('OK', 200);
         }
 

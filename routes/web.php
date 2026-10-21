@@ -39,6 +39,10 @@ Route::group([
     Route::match(['get', 'post'], '/rm/return/{order}', [\App\Http\Controllers\Webhook\RevenueMonsterController::class, 'getReturn'])->name('rm.return');
     Route::post('/rm/notify', [\App\Http\Controllers\Webhook\RevenueMonsterController::class, 'notify'])->name('rm.notify');
     Route::get('/rm/bind/{order}/{key}', [\App\Http\Controllers\Webhook\RevenueMonsterController::class, 'bindReturn'])->name('rm.bind');
+
+    // Plan upgrade on a saved card (GKash / Revenue Monster) — result page that runs the charge.
+    Route::get('/gkash/plan/{order}/{key}', [\App\Http\Controllers\Payment\PlanChangeController::class, 'charge'])->name('gkash.plan');
+    Route::get('/rm/plan/{order}/{key}', [\App\Http\Controllers\Payment\PlanChangeController::class, 'charge'])->name('rm.plan');
 });
 
 // Subscription card checkout: auto-posts to Fiuu's seamless card form

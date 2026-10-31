@@ -46,7 +46,7 @@ class Merchant extends Model implements Auditable
 
     public function getIcFrontUrlAttribute()
     {
-        return $this->ic_front ? Storage::disk('s3')->url($this->ic_front) : null;
+        return $this->ic_front ? \App\Support\S3File::url($this->ic_front) : null;
     }
 
     /**
@@ -55,7 +55,7 @@ class Merchant extends Model implements Auditable
      */
     public function getIcBackUrlAttribute()
     {
-        return $this->ic_back ? Storage::disk('s3')->url($this->ic_back) : null;
+        return $this->ic_back ? \App\Support\S3File::url($this->ic_back) : null;
     }
 
     /**
@@ -64,7 +64,7 @@ class Merchant extends Model implements Auditable
      */
     public function getSsmCertUrlAttribute()
     {
-        return $this->ssm_cert ? Storage::disk('s3')->url($this->ssm_cert) : null;
+        return $this->ssm_cert ? \App\Support\S3File::url($this->ssm_cert) : null;
     }
 
     /**

@@ -20,6 +20,20 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
         ]);
+        // Requests arrive through Cloudflare + Nginx. Trust their
+        // X-Forwarded-* headers so Laravel sees the real scheme (https)
+        // and host — otherwise signed URLs generated as https (see
+        // URL::forceScheme in AppServiceProvider) fail validation on
+        // an http-looking request, e.g. Livewire's /livewire/upload-file
+        // returns 401 and admin file uploads fail.
+        $middleware->trustProxies(
+            at: '*',
+            headers: Request::HEADER_X_FORWARDED_FOR
+                | Request::HEADER_X_FORWARDED_HOST
+                | Request::HEADER_X_FORWARDED_PORT
+                | Request::HEADER_X_FORWARDED_PROTO
+                | Request::HEADER_X_FORWARDED_AWS_ELB,
+        );
         $middleware->append(\App\Http\Middleware\CorsMiddleware::class);
         $middleware->validateCsrfTokens(except: [
             '/webhook/fiuu/*',

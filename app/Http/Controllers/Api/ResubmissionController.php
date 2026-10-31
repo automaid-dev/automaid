@@ -46,7 +46,7 @@ class ResubmissionController extends Controller
             $documents[] = [
                 'key' => $key,
                 'label' => $label,
-                'current_url' => $path ? Storage::disk('s3')->url($path) : null,
+                'current_url' => $path ? \App\Support\S3File::url($path) : null,
                 'expiry_field' => $expiryField,
             ];
         }
@@ -188,7 +188,7 @@ class ResubmissionController extends Controller
     {
         $path = '/automaid/images/' . $folder . '/' . uniqid() . date('Ymdhis') . '.' . $file->extension();
         $img = (new ImageManager(new Driver()))->read($file);
-        Storage::disk('s3')->put($path, $img->encode()->toFilePointer(), 'public');
+        Storage::disk('s3')->put($path, $img->encode()->toFilePointer());
         return $path;
     }
 }

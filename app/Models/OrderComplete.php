@@ -41,7 +41,7 @@ class OrderComplete extends Model implements Auditable
      */
     public function getImageFirstUrlAttribute()
     {
-        return $this->image1 ? Storage::disk('s3')->url($this->image1) : null;
+        return $this->image1 ? \App\Support\S3File::url($this->image1) : null;
     }
 
     /**
@@ -50,7 +50,7 @@ class OrderComplete extends Model implements Auditable
      */
     public function getImageSecondUrlAttribute()
     {
-        return $this->image2 ? Storage::disk('s3')->url($this->image2) : null;
+        return $this->image2 ? \App\Support\S3File::url($this->image2) : null;
     }
 
     /**
@@ -59,7 +59,7 @@ class OrderComplete extends Model implements Auditable
      */
     public function getImageThirdUrlAttribute()
     {
-        return $this->image3 ? Storage::disk('s3')->url($this->image3) : null;
+        return $this->image3 ? \App\Support\S3File::url($this->image3) : null;
     }
 
     /**

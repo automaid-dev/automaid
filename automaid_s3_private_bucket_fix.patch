@@ -1,0 +1,547 @@
+diff --git a/app/Models/OrderComplete.php b/app/Models/OrderComplete.php
+index c47b5f3..c39c5a3 100755
+--- a/app/Models/OrderComplete.php
++++ b/app/Models/OrderComplete.php
+@@ -41,7 +41,7 @@ class OrderComplete extends Model implements Auditable
+      */
+     public function getImageFirstUrlAttribute()
+     {
+-        return $this->image1 ? Storage::disk('s3')->url($this->image1) : null;
++        return $this->image1 ? \App\Support\S3File::url($this->image1) : null;
+     }
+ 
+     /**
+@@ -50,7 +50,7 @@ class OrderComplete extends Model implements Auditable
+      */
+     public function getImageSecondUrlAttribute()
+     {
+-        return $this->image2 ? Storage::disk('s3')->url($this->image2) : null;
++        return $this->image2 ? \App\Support\S3File::url($this->image2) : null;
+     }
+ 
+     /**
+@@ -59,7 +59,7 @@ class OrderComplete extends Model implements Auditable
+      */
+     public function getImageThirdUrlAttribute()
+     {
+-        return $this->image3 ? Storage::disk('s3')->url($this->image3) : null;
++        return $this->image3 ? \App\Support\S3File::url($this->image3) : null;
+     }
+ 
+     /**
+diff --git a/app/Models/User.php b/app/Models/User.php
+index 6032332..a7c9814 100644
+--- a/app/Models/User.php
++++ b/app/Models/User.php
+@@ -139,7 +139,7 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail, Aud
+      */
+     public function getAvatarUrlAttribute()
+     {
+-        return $this->avatar ? Storage::disk('s3')->url($this->avatar) : null;
++        return $this->avatar ? \App\Support\S3File::url($this->avatar) : null;
+     }
+ 
+     /**
+diff --git a/app/Models/Rider.php b/app/Models/Rider.php
+index 39a942f..a1b591f 100755
+--- a/app/Models/Rider.php
++++ b/app/Models/Rider.php
+@@ -48,7 +48,7 @@ class Rider extends Model implements Auditable
+      */
+     public function getIcFrontUrlAttribute()
+     {
+-        return $this->ic_front ? Storage::disk('s3')->url($this->ic_front) : null;
++        return $this->ic_front ? \App\Support\S3File::url($this->ic_front) : null;
+     }
+ 
+     /**
+@@ -57,7 +57,7 @@ class Rider extends Model implements Auditable
+      */
+     public function getIcBackUrlAttribute()
+     {
+-        return $this->ic_back ? Storage::disk('s3')->url($this->ic_back) : null;
++        return $this->ic_back ? \App\Support\S3File::url($this->ic_back) : null;
+     }
+ 
+     /**
+@@ -66,7 +66,7 @@ class Rider extends Model implements Auditable
+      */
+     public function getLicenseFrontUrlAttribute()
+     {
+-        return $this->license_front ? Storage::disk('s3')->url($this->license_front) : null;
++        return $this->license_front ? \App\Support\S3File::url($this->license_front) : null;
+     }
+ 
+     /**
+@@ -75,7 +75,7 @@ class Rider extends Model implements Auditable
+      */
+     public function getLicenseBackUrlAttribute()
+     {
+-        return $this->license_back ? Storage::disk('s3')->url($this->license_back) : null;
++        return $this->license_back ? \App\Support\S3File::url($this->license_back) : null;
+     }
+ 
+     /**
+@@ -84,7 +84,7 @@ class Rider extends Model implements Auditable
+      */
+     public function getJpjGrantUrlAttribute()
+     {
+-        return $this->jpj_grant ? Storage::disk('s3')->url($this->jpj_grant) : null;
++        return $this->jpj_grant ? \App\Support\S3File::url($this->jpj_grant) : null;
+     }
+ 
+     /**
+diff --git a/app/Models/Merchant.php b/app/Models/Merchant.php
+index 7af1efa..f9dace6 100755
+--- a/app/Models/Merchant.php
++++ b/app/Models/Merchant.php
+@@ -46,7 +46,7 @@ class Merchant extends Model implements Auditable
+ 
+     public function getIcFrontUrlAttribute()
+     {
+-        return $this->ic_front ? Storage::disk('s3')->url($this->ic_front) : null;
++        return $this->ic_front ? \App\Support\S3File::url($this->ic_front) : null;
+     }
+ 
+     /**
+@@ -55,7 +55,7 @@ class Merchant extends Model implements Auditable
+      */
+     public function getIcBackUrlAttribute()
+     {
+-        return $this->ic_back ? Storage::disk('s3')->url($this->ic_back) : null;
++        return $this->ic_back ? \App\Support\S3File::url($this->ic_back) : null;
+     }
+ 
+     /**
+@@ -64,7 +64,7 @@ class Merchant extends Model implements Auditable
+      */
+     public function getSsmCertUrlAttribute()
+     {
+-        return $this->ssm_cert ? Storage::disk('s3')->url($this->ssm_cert) : null;
++        return $this->ssm_cert ? \App\Support\S3File::url($this->ssm_cert) : null;
+     }
+ 
+     /**
+diff --git a/web/srv/www/html/app/Support/S3File.php b/app/Support/S3File.php
+new file mode 100644
+index 0000000..c4ceaa4
+--- /dev/null
++++ b/app/Support/S3File.php
+@@ -0,0 +1,42 @@
++<?php
++
++namespace App\Support;
++
++use Illuminate\Support\Facades\Crypt;
++
++/**
++ * Link to a private S3 object, served through Laravel
++ * (PublicDocumentController::file) instead of a direct S3 URL.
++ *
++ * The S3 bucket is private (Block Public Access on, ACLs disabled), so
++ * \App\Support\S3File::url() links return AccessDenied. The token is the
++ * object path encrypted with APP_KEY, so links cannot be guessed or
++ * changed to point at another file.
++ */
++class S3File
++{
++    public static function url(?string $path): ?string
++    {
++        if ($path === null || $path === '') {
++            return null;
++        }
++        // Already a full URL (very old rows) — leave it alone.
++        if (preg_match('#^https?://#i', $path)) {
++            return $path;
++        }
++        return route('documents.file', ['token' => Crypt::encryptString($path)]);
++    }
++
++    public static function pathFromToken(string $token): ?string
++    {
++        try {
++            $path = Crypt::decryptString($token);
++        } catch (\Throwable $e) {
++            return null;
++        }
++        if ($path === '' || str_contains($path, '..')) {
++            return null;
++        }
++        return ltrim($path, '/');
++    }
++}
+diff --git a/app/Filament/Resources/UserResource/Pages/EditUser.php b/app/Filament/Resources/UserResource/Pages/EditUser.php
+index 55b60b2..1cde375 100644
+--- a/app/Filament/Resources/UserResource/Pages/EditUser.php
++++ b/app/Filament/Resources/UserResource/Pages/EditUser.php
+@@ -636,6 +636,7 @@ class EditUser extends EditRecord
+                                                                 FileUpload::make('avatar')
+                                                                     ->label(false)
+                                                                     ->disk('s3')
++                                                    ->visibility('private')
+                                                                     ->directory('automaid/images/avatars')
+                                                                     ->live()
+                                                                     ->avatar()
+@@ -890,6 +891,7 @@ class EditUser extends EditRecord
+                                                 FileUpload::make('rider.ic_front')
+                                                     ->label('Identity Card (Front)')
+                                                     ->disk('s3')
++                                                    ->visibility('private')
+                                                     ->directory('automaid/images/riders')
+                                                     ->live()
+                                                     ->preserveFilenames(false)
+@@ -897,7 +899,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->rider?->ic_front) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->rider->ic_front);
++                                                        $url = \App\Support\S3File::url($this->record->rider->ic_front);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+@@ -905,6 +907,7 @@ class EditUser extends EditRecord
+                                                 FileUpload::make('rider.ic_back')
+                                                     ->label('Identity Card (Back)')
+                                                     ->disk('s3')
++                                                    ->visibility('private')
+                                                     ->directory('automaid/images/riders')
+                                                     ->live()
+                                                     ->preserveFilenames(false)
+@@ -912,7 +915,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->rider?->ic_back) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->rider->ic_back);
++                                                        $url = \App\Support\S3File::url($this->record->rider->ic_back);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+@@ -920,6 +923,7 @@ class EditUser extends EditRecord
+                                                 FileUpload::make('rider.license_front')
+                                                     ->label('Driving License (Front)')
+                                                     ->disk('s3')
++                                                    ->visibility('private')
+                                                     ->directory('automaid/images/riders')
+                                                     ->live()
+                                                     ->preserveFilenames(false)
+@@ -927,7 +931,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->rider?->license_front) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->rider->license_front);
++                                                        $url = \App\Support\S3File::url($this->record->rider->license_front);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+@@ -935,6 +939,7 @@ class EditUser extends EditRecord
+                                                 FileUpload::make('rider.license_back')
+                                                     ->label('Driving License (Back)')
+                                                     ->disk('s3')
++                                                    ->visibility('private')
+                                                     ->directory('automaid/images/riders')
+                                                     ->live()
+                                                     ->preserveFilenames(false)
+@@ -942,7 +947,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->rider?->license_back) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->rider->license_back);
++                                                        $url = \App\Support\S3File::url($this->record->rider->license_back);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+@@ -950,6 +955,7 @@ class EditUser extends EditRecord
+                                                 FileUpload::make('rider.jpj_grant')
+                                                     ->label('JPJ Grant')
+                                                     ->disk('s3')
++                                                    ->visibility('private')
+                                                     ->directory('automaid/images/riders')
+                                                     ->live()
+                                                     ->preserveFilenames(false)
+@@ -957,7 +963,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->rider?->jpj_grant) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->rider->jpj_grant);
++                                                        $url = \App\Support\S3File::url($this->record->rider->jpj_grant);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+@@ -1039,6 +1045,7 @@ class EditUser extends EditRecord
+                                                                 FileUpload::make('avatar')
+                                                                     ->label(false)
+                                                                     ->disk('s3')
++                                                    ->visibility('private')
+                                                                     ->directory('automaid/images/avatars')
+                                                                     ->live()
+                                                                     ->avatar()
+@@ -1268,7 +1275,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->merchant?->ic_front) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->merchant->ic_front);
++                                                        $url = \App\Support\S3File::url($this->record->merchant->ic_front);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+@@ -1284,7 +1291,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->merchant?->ic_back) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->merchant->ic_back);
++                                                        $url = \App\Support\S3File::url($this->record->merchant->ic_back);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+@@ -1300,7 +1307,7 @@ class EditUser extends EditRecord
+                                                         if (!$this->record?->merchant?->ssm_cert) {
+                                                             return null;
+                                                         }
+-                                                        $url = Storage::disk('s3')->url($this->record->merchant->ssm_cert);
++                                                        $url = \App\Support\S3File::url($this->record->merchant->ssm_cert);
+                                                         return new HtmlString(
+                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
+                                                         );
+diff --git a/app/Http/Controllers/Api/MerchantController.php b/app/Http/Controllers/Api/MerchantController.php
+index 2781a6e..eb174e5 100644
+--- a/app/Http/Controllers/Api/MerchantController.php
++++ b/app/Http/Controllers/Api/MerchantController.php
+@@ -466,9 +466,9 @@ class MerchantController extends Controller
+                 $user->save();
+ 
+                 // get full path image
+-                $merchant->ic_front_url = ($merchant->ic_front) ? Storage::disk('s3')->url($merchant->ic_front) : null;
+-                $merchant->ic_back_url = ($merchant->ic_back) ? Storage::disk('s3')->url($merchant->ic_back) : null;
+-                $merchant->ssm_cert_url = ($merchant->ssm_cert) ? Storage::disk('s3')->url($merchant->ssm_cert) : null;
++                $merchant->ic_front_url = ($merchant->ic_front) ? \App\Support\S3File::url($merchant->ic_front) : null;
++                $merchant->ic_back_url = ($merchant->ic_back) ? \App\Support\S3File::url($merchant->ic_back) : null;
++                $merchant->ssm_cert_url = ($merchant->ssm_cert) ? \App\Support\S3File::url($merchant->ssm_cert) : null;
+             }
+ 
+             $user->load('roles');            
+@@ -498,7 +498,7 @@ class MerchantController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ 
+diff --git a/app/Http/Controllers/Api/ResubmissionController.php b/app/Http/Controllers/Api/ResubmissionController.php
+index de9a04d..a531ab7 100644
+--- a/app/Http/Controllers/Api/ResubmissionController.php
++++ b/app/Http/Controllers/Api/ResubmissionController.php
+@@ -46,7 +46,7 @@ class ResubmissionController extends Controller
+             $documents[] = [
+                 'key' => $key,
+                 'label' => $label,
+-                'current_url' => $path ? Storage::disk('s3')->url($path) : null,
++                'current_url' => $path ? \App\Support\S3File::url($path) : null,
+                 'expiry_field' => $expiryField,
+             ];
+         }
+@@ -188,7 +188,7 @@ class ResubmissionController extends Controller
+     {
+         $path = '/automaid/images/' . $folder . '/' . uniqid() . date('Ymdhis') . '.' . $file->extension();
+         $img = (new ImageManager(new Driver()))->read($file);
+-        Storage::disk('s3')->put($path, $img->encode()->toFilePointer(), 'public');
++        Storage::disk('s3')->put($path, $img->encode()->toFilePointer());
+         return $path;
+     }
+ }
+diff --git a/app/Http/Controllers/Api/Customer/BookingController.php b/app/Http/Controllers/Api/Customer/BookingController.php
+index 9e09023..35173e4 100644
+--- a/app/Http/Controllers/Api/Customer/BookingController.php
++++ b/app/Http/Controllers/Api/Customer/BookingController.php
+@@ -1298,7 +1298,7 @@ class BookingController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ 
+diff --git a/app/Http/Controllers/Api/Customer/ProfileController.php b/app/Http/Controllers/Api/Customer/ProfileController.php
+index 6c0af42..3e0b0d1 100644
+--- a/app/Http/Controllers/Api/Customer/ProfileController.php
++++ b/app/Http/Controllers/Api/Customer/ProfileController.php
+@@ -158,7 +158,7 @@ class ProfileController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ 
+diff --git a/app/Http/Controllers/Api/Rider/ReapplyController.php b/app/Http/Controllers/Api/Rider/ReapplyController.php
+index 70fea0b..4271ebd 100644
+--- a/app/Http/Controllers/Api/Rider/ReapplyController.php
++++ b/app/Http/Controllers/Api/Rider/ReapplyController.php
+@@ -142,7 +142,7 @@ class ReapplyController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ }
+diff --git a/app/Http/Controllers/Api/Rider/DeliveryController.php b/app/Http/Controllers/Api/Rider/DeliveryController.php
+index 57e6a9d..0a0735d 100644
+--- a/app/Http/Controllers/Api/Rider/DeliveryController.php
++++ b/app/Http/Controllers/Api/Rider/DeliveryController.php
+@@ -584,7 +584,7 @@ class DeliveryController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ }
+diff --git a/app/Http/Controllers/Api/Rider/ProfileController.php b/app/Http/Controllers/Api/Rider/ProfileController.php
+index 331c023..11b7369 100644
+--- a/app/Http/Controllers/Api/Rider/ProfileController.php
++++ b/app/Http/Controllers/Api/Rider/ProfileController.php
+@@ -171,7 +171,7 @@ class ProfileController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ 
+diff --git a/app/Http/Controllers/Api/RiderController.php b/app/Http/Controllers/Api/RiderController.php
+index 9c3793c..99a1964 100644
+--- a/app/Http/Controllers/Api/RiderController.php
++++ b/app/Http/Controllers/Api/RiderController.php
+@@ -317,7 +317,7 @@ class RiderController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ 
+@@ -447,11 +447,11 @@ class RiderController extends Controller
+                 $user->save();
+ 
+                 // get full path image
+-                $rider->ic_front_url = ($rider->ic_front) ? Storage::disk('s3')->url($rider->ic_front) : null;
+-                $rider->ic_back_url = ($rider->ic_back) ? Storage::disk('s3')->url($rider->ic_back) : null;
+-                $rider->license_front_url = ($rider->license_front) ? Storage::disk('s3')->url($rider->license_front) : null;
+-                $rider->license_back_url = ($rider->license_back) ? Storage::disk('s3')->url($rider->license_back) : null;
+-                $rider->jpj_grant_url = ($rider->jpj_grant) ? Storage::disk('s3')->url($rider->jpj_grant) : null;
++                $rider->ic_front_url = ($rider->ic_front) ? \App\Support\S3File::url($rider->ic_front) : null;
++                $rider->ic_back_url = ($rider->ic_back) ? \App\Support\S3File::url($rider->ic_back) : null;
++                $rider->license_front_url = ($rider->license_front) ? \App\Support\S3File::url($rider->license_front) : null;
++                $rider->license_back_url = ($rider->license_back) ? \App\Support\S3File::url($rider->license_back) : null;
++                $rider->jpj_grant_url = ($rider->jpj_grant) ? \App\Support\S3File::url($rider->jpj_grant) : null;
+ 
+             }
+             
+diff --git a/app/Http/Controllers/Api/Help/TicketController.php b/app/Http/Controllers/Api/Help/TicketController.php
+index 849dda8..fe607ff 100644
+--- a/app/Http/Controllers/Api/Help/TicketController.php
++++ b/app/Http/Controllers/Api/Help/TicketController.php
+@@ -266,7 +266,7 @@ class TicketController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ 
+diff --git a/app/Http/Controllers/Api/Merchant/ReapplyController.php b/app/Http/Controllers/Api/Merchant/ReapplyController.php
+index b835240..e35a140 100644
+--- a/app/Http/Controllers/Api/Merchant/ReapplyController.php
++++ b/app/Http/Controllers/Api/Merchant/ReapplyController.php
+@@ -157,7 +157,7 @@ class ReapplyController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ }
+diff --git a/app/Http/Controllers/Api/Merchant/ProfileController.php b/app/Http/Controllers/Api/Merchant/ProfileController.php
+index 3c01d71..f08e556 100644
+--- a/app/Http/Controllers/Api/Merchant/ProfileController.php
++++ b/app/Http/Controllers/Api/Merchant/ProfileController.php
+@@ -181,7 +181,7 @@ class ProfileController extends Controller
+         $img = $manager->read($file);
+         // $img->resize(width: 200);
+         $pointer = $img->encode()->toFilePointer();
+-        Storage::disk('s3')->put($path, $pointer, 'public');  
++        Storage::disk('s3')->put($path, $pointer);  
+         return $path;
+     }
+ 
+diff --git a/app/Http/Controllers/PublicDocumentController.php b/app/Http/Controllers/PublicDocumentController.php
+index 00c6ad7..70ac9be 100644
+--- a/app/Http/Controllers/PublicDocumentController.php
++++ b/app/Http/Controllers/PublicDocumentController.php
+@@ -61,6 +61,29 @@ class PublicDocumentController extends Controller
+      * used throughout this app for anything shared outside an
+      * authenticated API call.
+      */
++    /**
++     * Any private S3 object, by an encrypted path token (App\Support\S3File).
++     * Used for rider/merchant documents, avatars, delivery proof photos
++     * and other files that used to be linked straight to S3.
++     */
++    public function file(string $token): Response
++    {
++        $path = \App\Support\S3File::pathFromToken($token);
++        if (!$path || !Storage::disk('s3')->exists($path)) {
++            abort(404);
++        }
++
++        $contents = Storage::disk('s3')->get($path);
++        $mime = Storage::disk('s3')->mimeType($path) ?: 'application/octet-stream';
++
++        return response($contents, 200, [
++            'Content-Type' => $mime,
++            'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
++            'Cache-Control' => 'private, max-age=86400',
++            'X-Content-Type-Options' => 'nosniff',
++        ]);
++    }
++
+     public function stepPhoto(string $hashslug): Response
+     {
+         $photo = OrderStepPhoto::where('hashslug', $hashslug)->first();
+diff --git a/config/livewire.php b/config/livewire.php
+index 1917f43..964b022 100644
+--- a/config/livewire.php
++++ b/config/livewire.php
+@@ -76,7 +76,7 @@ return [
+         // CORS requirement entirely for this temporary step; the FINAL
+         // saved file still goes to S3 exactly as before, since that's
+         // controlled separately by each field's own ->disk('s3') call.
+-        'disk' => 's3',        // Example: 'local', 's3'              | Default: 'default'
++        'disk' => 'local',     // Example: 'local', 's3'              | Default: 'default'
+         'rules' => null,       // Example: ['file', 'mimes:png,jpg']  | Default: ['required', 'file', 'max:12288'] (12MB)
+         'directory' => null,   // Example: 'tmp'                      | Default: 'livewire-tmp'
+         'middleware' => null,  // Example: 'throttle:5,1'             | Default: 'throttle:60,1'
+diff --git a/routes/web.php b/routes/web.php
+index 948b67c..1961fc0 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -67,6 +67,9 @@ Route::get('/documents/terms-conditions', [\App\Http\Controllers\PublicDocumentC
+ // Same reasoning, for order handoff photos (rider pickup, merchant
+ // wash, delivery, etc.) — same S3 bucket, same Block Public Access
+ // restriction.
++Route::get('/documents/file/{token}', [\App\Http\Controllers\PublicDocumentController::class, 'file'])
++    ->where('token', '.*')
++    ->name('documents.file');
+ Route::get('/documents/step-photo/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'stepPhoto'])
+     ->name('documents.step-photo');
+ Route::get('/documents/pickup-photo/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'pickupPhoto'])

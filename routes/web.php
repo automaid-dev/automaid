@@ -67,6 +67,9 @@ Route::get('/documents/terms-conditions', [\App\Http\Controllers\PublicDocumentC
 // Same reasoning, for order handoff photos (rider pickup, merchant
 // wash, delivery, etc.) — same S3 bucket, same Block Public Access
 // restriction.
+Route::get('/documents/file/{token}', [\App\Http\Controllers\PublicDocumentController::class, 'file'])
+    ->where('token', '.*')
+    ->name('documents.file');
 Route::get('/documents/step-photo/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'stepPhoto'])
     ->name('documents.step-photo');
 Route::get('/documents/pickup-photo/{hashslug}', [\App\Http\Controllers\PublicDocumentController::class, 'pickupPhoto'])

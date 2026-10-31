@@ -139,7 +139,7 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail, Aud
      */
     public function getAvatarUrlAttribute()
     {
-        return $this->avatar ? Storage::disk('s3')->url($this->avatar) : null;
+        return $this->avatar ? \App\Support\S3File::url($this->avatar) : null;
     }
 
     /**

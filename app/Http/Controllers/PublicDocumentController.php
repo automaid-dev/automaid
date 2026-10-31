@@ -61,6 +61,29 @@ class PublicDocumentController extends Controller
      * used throughout this app for anything shared outside an
      * authenticated API call.
      */
+    /**
+     * Any private S3 object, by an encrypted path token (App\Support\S3File).
+     * Used for rider/merchant documents, avatars, delivery proof photos
+     * and other files that used to be linked straight to S3.
+     */
+    public function file(string $token): Response
+    {
+        $path = \App\Support\S3File::pathFromToken($token);
+        if (!$path || !Storage::disk('s3')->exists($path)) {
+            abort(404);
+        }
+
+        $contents = Storage::disk('s3')->get($path);
+        $mime = Storage::disk('s3')->mimeType($path) ?: 'application/octet-stream';
+
+        return response($contents, 200, [
+            'Content-Type' => $mime,
+            'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
+            'Cache-Control' => 'private, max-age=86400',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
     public function stepPhoto(string $hashslug): Response
     {
         $photo = OrderStepPhoto::where('hashslug', $hashslug)->first();

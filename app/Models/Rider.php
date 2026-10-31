@@ -48,7 +48,7 @@ class Rider extends Model implements Auditable
      */
     public function getIcFrontUrlAttribute()
     {
-        return $this->ic_front ? Storage::disk('s3')->url($this->ic_front) : null;
+        return $this->ic_front ? \App\Support\S3File::url($this->ic_front) : null;
     }
 
     /**
@@ -57,7 +57,7 @@ class Rider extends Model implements Auditable
      */
     public function getIcBackUrlAttribute()
     {
-        return $this->ic_back ? Storage::disk('s3')->url($this->ic_back) : null;
+        return $this->ic_back ? \App\Support\S3File::url($this->ic_back) : null;
     }
 
     /**
@@ -66,7 +66,7 @@ class Rider extends Model implements Auditable
      */
     public function getLicenseFrontUrlAttribute()
     {
-        return $this->license_front ? Storage::disk('s3')->url($this->license_front) : null;
+        return $this->license_front ? \App\Support\S3File::url($this->license_front) : null;
     }
 
     /**
@@ -75,7 +75,7 @@ class Rider extends Model implements Auditable
      */
     public function getLicenseBackUrlAttribute()
     {
-        return $this->license_back ? Storage::disk('s3')->url($this->license_back) : null;
+        return $this->license_back ? \App\Support\S3File::url($this->license_back) : null;
     }
 
     /**
@@ -84,7 +84,7 @@ class Rider extends Model implements Auditable
      */
     public function getJpjGrantUrlAttribute()
     {
-        return $this->jpj_grant ? Storage::disk('s3')->url($this->jpj_grant) : null;
+        return $this->jpj_grant ? \App\Support\S3File::url($this->jpj_grant) : null;
     }
 
     /**

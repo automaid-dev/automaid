@@ -317,7 +317,7 @@ class RiderController extends Controller
         $img = $manager->read($file);
         // $img->resize(width: 200);
         $pointer = $img->encode()->toFilePointer();
-        Storage::disk('s3')->put($path, $pointer, 'public');  
+        Storage::disk('s3')->put($path, $pointer);  
         return $path;
     }
 
@@ -447,11 +447,11 @@ class RiderController extends Controller
                 $user->save();
 
                 // get full path image
-                $rider->ic_front_url = ($rider->ic_front) ? Storage::disk('s3')->url($rider->ic_front) : null;
-                $rider->ic_back_url = ($rider->ic_back) ? Storage::disk('s3')->url($rider->ic_back) : null;
-                $rider->license_front_url = ($rider->license_front) ? Storage::disk('s3')->url($rider->license_front) : null;
-                $rider->license_back_url = ($rider->license_back) ? Storage::disk('s3')->url($rider->license_back) : null;
-                $rider->jpj_grant_url = ($rider->jpj_grant) ? Storage::disk('s3')->url($rider->jpj_grant) : null;
+                $rider->ic_front_url = ($rider->ic_front) ? \App\Support\S3File::url($rider->ic_front) : null;
+                $rider->ic_back_url = ($rider->ic_back) ? \App\Support\S3File::url($rider->ic_back) : null;
+                $rider->license_front_url = ($rider->license_front) ? \App\Support\S3File::url($rider->license_front) : null;
+                $rider->license_back_url = ($rider->license_back) ? \App\Support\S3File::url($rider->license_back) : null;
+                $rider->jpj_grant_url = ($rider->jpj_grant) ? \App\Support\S3File::url($rider->jpj_grant) : null;
 
             }
             

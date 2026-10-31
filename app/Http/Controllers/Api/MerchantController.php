@@ -466,9 +466,9 @@ class MerchantController extends Controller
                 $user->save();
 
                 // get full path image
-                $merchant->ic_front_url = ($merchant->ic_front) ? Storage::disk('s3')->url($merchant->ic_front) : null;
-                $merchant->ic_back_url = ($merchant->ic_back) ? Storage::disk('s3')->url($merchant->ic_back) : null;
-                $merchant->ssm_cert_url = ($merchant->ssm_cert) ? Storage::disk('s3')->url($merchant->ssm_cert) : null;
+                $merchant->ic_front_url = ($merchant->ic_front) ? \App\Support\S3File::url($merchant->ic_front) : null;
+                $merchant->ic_back_url = ($merchant->ic_back) ? \App\Support\S3File::url($merchant->ic_back) : null;
+                $merchant->ssm_cert_url = ($merchant->ssm_cert) ? \App\Support\S3File::url($merchant->ssm_cert) : null;
             }
 
             $user->load('roles');            
@@ -498,7 +498,7 @@ class MerchantController extends Controller
         $img = $manager->read($file);
         // $img->resize(width: 200);
         $pointer = $img->encode()->toFilePointer();
-        Storage::disk('s3')->put($path, $pointer, 'public');  
+        Storage::disk('s3')->put($path, $pointer);  
         return $path;
     }
 

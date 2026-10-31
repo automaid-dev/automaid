@@ -266,7 +266,7 @@ class TicketController extends Controller
         $img = $manager->read($file);
         // $img->resize(width: 200);
         $pointer = $img->encode()->toFilePointer();
-        Storage::disk('s3')->put($path, $pointer, 'public');  
+        Storage::disk('s3')->put($path, $pointer);  
         return $path;
     }
 

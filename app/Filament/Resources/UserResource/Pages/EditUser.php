@@ -636,6 +636,7 @@ class EditUser extends EditRecord
                                                                 FileUpload::make('avatar')
                                                                     ->label(false)
                                                                     ->disk('s3')
+                                                    ->visibility('private')
                                                                     ->directory('automaid/images/avatars')
                                                                     ->live()
                                                                     ->avatar()
@@ -890,6 +891,7 @@ class EditUser extends EditRecord
                                                 FileUpload::make('rider.ic_front')
                                                     ->label('Identity Card (Front)')
                                                     ->disk('s3')
+                                                    ->visibility('private')
                                                     ->directory('automaid/images/riders')
                                                     ->live()
                                                     ->preserveFilenames(false)
@@ -897,7 +899,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->rider?->ic_front) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->rider->ic_front);
+                                                        $url = \App\Support\S3File::url($this->record->rider->ic_front);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );
@@ -905,6 +907,7 @@ class EditUser extends EditRecord
                                                 FileUpload::make('rider.ic_back')
                                                     ->label('Identity Card (Back)')
                                                     ->disk('s3')
+                                                    ->visibility('private')
                                                     ->directory('automaid/images/riders')
                                                     ->live()
                                                     ->preserveFilenames(false)
@@ -912,7 +915,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->rider?->ic_back) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->rider->ic_back);
+                                                        $url = \App\Support\S3File::url($this->record->rider->ic_back);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );
@@ -920,6 +923,7 @@ class EditUser extends EditRecord
                                                 FileUpload::make('rider.license_front')
                                                     ->label('Driving License (Front)')
                                                     ->disk('s3')
+                                                    ->visibility('private')
                                                     ->directory('automaid/images/riders')
                                                     ->live()
                                                     ->preserveFilenames(false)
@@ -927,7 +931,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->rider?->license_front) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->rider->license_front);
+                                                        $url = \App\Support\S3File::url($this->record->rider->license_front);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );
@@ -935,6 +939,7 @@ class EditUser extends EditRecord
                                                 FileUpload::make('rider.license_back')
                                                     ->label('Driving License (Back)')
                                                     ->disk('s3')
+                                                    ->visibility('private')
                                                     ->directory('automaid/images/riders')
                                                     ->live()
                                                     ->preserveFilenames(false)
@@ -942,7 +947,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->rider?->license_back) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->rider->license_back);
+                                                        $url = \App\Support\S3File::url($this->record->rider->license_back);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );
@@ -950,6 +955,7 @@ class EditUser extends EditRecord
                                                 FileUpload::make('rider.jpj_grant')
                                                     ->label('JPJ Grant')
                                                     ->disk('s3')
+                                                    ->visibility('private')
                                                     ->directory('automaid/images/riders')
                                                     ->live()
                                                     ->preserveFilenames(false)
@@ -957,7 +963,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->rider?->jpj_grant) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->rider->jpj_grant);
+                                                        $url = \App\Support\S3File::url($this->record->rider->jpj_grant);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );
@@ -1039,6 +1045,7 @@ class EditUser extends EditRecord
                                                                 FileUpload::make('avatar')
                                                                     ->label(false)
                                                                     ->disk('s3')
+                                                    ->visibility('private')
                                                                     ->directory('automaid/images/avatars')
                                                                     ->live()
                                                                     ->avatar()
@@ -1268,7 +1275,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->merchant?->ic_front) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->merchant->ic_front);
+                                                        $url = \App\Support\S3File::url($this->record->merchant->ic_front);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );
@@ -1284,7 +1291,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->merchant?->ic_back) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->merchant->ic_back);
+                                                        $url = \App\Support\S3File::url($this->record->merchant->ic_back);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );
@@ -1300,7 +1307,7 @@ class EditUser extends EditRecord
                                                         if (!$this->record?->merchant?->ssm_cert) {
                                                             return null;
                                                         }
-                                                        $url = Storage::disk('s3')->url($this->record->merchant->ssm_cert);
+                                                        $url = \App\Support\S3File::url($this->record->merchant->ssm_cert);
                                                         return new HtmlString(
                                                             '<a href="' . $url . '" target="_blank" class="text-blue-600 underline">Download</a>'
                                                         );

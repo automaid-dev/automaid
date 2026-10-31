@@ -8,8 +8,13 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Payment gateway service charge: a % of the final amount (after voucher
- * and SST), set per gateway by admin (Settings → Commission & Fee →
- * Payment Gateway). 0% = no charge (the default).
+ * and SST), set by admin per gateway AND per payment kind (Settings →
+ * Commission & Fee → Payment Gateway). 0% = no charge (the default).
+ *
+ *   booking      → {gateway}_service_charge_percent
+ *                  (bookings, dry cleaning, bag purchases)
+ *   subscription → {gateway}_subscription_service_charge_percent
+ *                  (sign-up, card update, upgrade, monthly renewal)
  *
  * Added as its own line ("Payment gateway service charge") and included
  * in orders.grand_total, so the gateway, the transaction record and the
@@ -21,19 +26,39 @@ class GatewayFee
 {
     public const LABEL = 'Payment gateway service charge';
 
-    public static function percent(?string $gateway, ?Setting $setting = null): float
+    public const BOOKING = 'booking';
+    public const SUBSCRIPTION = 'subscription';
+
+    /** Order types charged at the subscription rate. */
+    public const SUBSCRIPTION_ORDER_TYPES = [
+        Order::SUBSCRIPTION,
+        Order::SUBSCRIPTION_RENEWAL,
+        Order::SUBSCRIPTION_UPDATE,
+        Order::SUBSCRIPTION_UPGRADE,
+    ];
+
+    public static function kindForOrderType(?string $orderType): string
+    {
+        return in_array($orderType, self::SUBSCRIPTION_ORDER_TYPES, true) ? self::SUBSCRIPTION : self::BOOKING;
+    }
+
+    public static function percent(?string $gateway, ?Setting $setting = null, string $kind = self::BOOKING): float
     {
         $setting ??= Setting::find(1);
         if (!$setting) {
             return 0.0;
         }
-        $column = (in_array($gateway, ['gkash', 'revenuemonster'], true) ? $gateway : 'fiuu') . '_service_charge_percent';
-        return max(0.0, (float) ($setting->$column ?? 0));
+        $gw = in_array($gateway, ['gkash', 'revenuemonster'], true) ? $gateway : 'fiuu';
+        $bookingColumn = "{$gw}_service_charge_percent";
+        $column = $kind === self::SUBSCRIPTION ? "{$gw}_subscription_service_charge_percent" : $bookingColumn;
+        // Before the migration runs, subscriptions fall back to the old single rate.
+        $value = $setting->getAttribute($column) ?? $setting->getAttribute($bookingColumn);
+        return max(0.0, (float) ($value ?? 0));
     }
 
-    public static function forAmount(float $amount, ?string $gateway, ?Setting $setting = null): float
+    public static function forAmount(float $amount, ?string $gateway, ?Setting $setting = null, string $kind = self::BOOKING): float
     {
-        $pct = self::percent($gateway, $setting);
+        $pct = self::percent($gateway, $setting, $kind);
         if ($pct <= 0 || $amount <= 0) {
             return 0.0;
         }
@@ -53,8 +78,9 @@ class GatewayFee
         if (!Schema::hasColumn('orders', 'gateway_fee')) {
             return; // migration not run yet
         }
-        $pct = self::percent($order->payment_gateway);
-        $fee = self::forAmount((float) $order->grand_total, $order->payment_gateway);
+        $kind = self::kindForOrderType($order->order_type);
+        $pct = self::percent($order->payment_gateway, null, $kind);
+        $fee = self::forAmount((float) $order->grand_total, $order->payment_gateway, null, $kind);
         if ($fee <= 0) {
             return;
         }
@@ -83,7 +109,7 @@ class GatewayFee
             'booking' => self::percent($setting->payment_gateway_booking ?? 'fiuu', $setting),
             'dry_cleaning' => self::percent($setting->payment_gateway_dry_cleaning ?? 'fiuu', $setting),
             'bag_purchase' => self::percent($setting->payment_gateway_bag_purchase ?? 'fiuu', $setting),
-            'subscription' => self::percent($setting->payment_gateway_subscription ?? 'fiuu', $setting),
+            'subscription' => self::percent($setting->payment_gateway_subscription ?? 'fiuu', $setting, self::SUBSCRIPTION),
         ];
     }
 }

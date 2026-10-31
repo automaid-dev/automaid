@@ -327,10 +327,13 @@ class EditSetting extends EditRecord
                                                             ->native(false)
                                                             ->helperText('Existing subscribers keep recurring on whichever gateway they originally signed up under, even after this changes.'),
                                                     ]),
+                                                Placeholder::make('service_charge_booking_heading')
+                                                    ->label(false)
+                                                    ->content(new \Illuminate\Support\HtmlString('<strong>Service charge — bookings, dry cleaning & bag purchases</strong>')),
                                                 Grid::make(3)
                                                     ->schema([
                                                         TextInput::make('fiuu_service_charge_percent')
-                                                            ->label('Fiuu service charge')
+                                                            ->label('Fiuu — booking')
                                                             ->numeric()
                                                             ->minValue(0)
                                                             ->maxValue(10)
@@ -338,9 +341,9 @@ class EditSetting extends EditRecord
                                                             ->suffix('%')
                                                             ->default(0)
                                                             ->required()
-                                                            ->helperText('Added to the customer\'s total when paying through Fiuu. 0 = no charge.'),
+                                                            ->helperText('Bookings, dry cleaning and bag purchases paid through Fiuu. 0 = no charge.'),
                                                         TextInput::make('gkash_service_charge_percent')
-                                                            ->label('GKash service charge')
+                                                            ->label('GKash — booking')
                                                             ->numeric()
                                                             ->minValue(0)
                                                             ->maxValue(10)
@@ -348,9 +351,9 @@ class EditSetting extends EditRecord
                                                             ->suffix('%')
                                                             ->default(0)
                                                             ->required()
-                                                            ->helperText('Added to the customer\'s total when paying through GKash. 0 = no charge.'),
+                                                            ->helperText('Bookings, dry cleaning and bag purchases paid through GKash. 0 = no charge.'),
                                                         TextInput::make('revenuemonster_service_charge_percent')
-                                                            ->label('Revenue Monster service charge')
+                                                            ->label('Revenue Monster — booking')
                                                             ->numeric()
                                                             ->minValue(0)
                                                             ->maxValue(10)
@@ -358,11 +361,47 @@ class EditSetting extends EditRecord
                                                             ->suffix('%')
                                                             ->default(0)
                                                             ->required()
-                                                            ->helperText('Added to the customer\'s total when paying through Revenue Monster. 0 = no charge.'),
+                                                            ->helperText('Bookings, dry cleaning and bag purchases paid through Revenue Monster. 0 = no charge.'),
+                                                    ]),
+                                                Placeholder::make('service_charge_subscription_heading')
+                                                    ->label(false)
+                                                    ->content(new \Illuminate\Support\HtmlString('<strong>Service charge — subscriptions (sign-up, upgrade, renewal)</strong>')),
+                                                Grid::make(3)
+                                                    ->schema([
+                                                        TextInput::make('fiuu_subscription_service_charge_percent')
+                                                            ->label('Fiuu — subscription')
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(10)
+                                                            ->step(0.01)
+                                                            ->suffix('%')
+                                                            ->default(0)
+                                                            ->required()
+                                                            ->helperText('Subscription sign-up, card update, upgrade and monthly renewal through Fiuu. 0 = no charge.'),
+                                                        TextInput::make('gkash_subscription_service_charge_percent')
+                                                            ->label('GKash — subscription')
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(10)
+                                                            ->step(0.01)
+                                                            ->suffix('%')
+                                                            ->default(0)
+                                                            ->required()
+                                                            ->helperText('Subscription sign-up, card update, upgrade and monthly renewal through GKash. 0 = no charge.'),
+                                                        TextInput::make('revenuemonster_subscription_service_charge_percent')
+                                                            ->label('Revenue Monster — subscription')
+                                                            ->numeric()
+                                                            ->minValue(0)
+                                                            ->maxValue(10)
+                                                            ->step(0.01)
+                                                            ->suffix('%')
+                                                            ->default(0)
+                                                            ->required()
+                                                            ->helperText('Subscription sign-up, card update, upgrade and monthly renewal through Revenue Monster. 0 = no charge.'),
                                                     ]),
                                                 Placeholder::make('service_charge_note')
                                                     ->label(false)
-                                                    ->content('Applies to bookings, dry cleaning, bag purchases, subscription sign-ups/upgrades and monthly renewals, as % of the final total (after voucher and SST). Shown to the customer as "Payment gateway service charge" before they pay. Note: Bank Negara Malaysia does not allow surcharges on debit/credit card payments — confirm with Fiuu/GKash before setting a rate above 0.'),
+                                                    ->content('Each rate is a % of the final total (after voucher and SST). Shown to the customer as "Payment gateway service charge" before they pay. Note: Bank Negara Malaysia does not allow surcharges on debit/credit card payments — confirm with Fiuu/GKash before setting a rate above 0.'),
                                             ]),
 
                                     ]),

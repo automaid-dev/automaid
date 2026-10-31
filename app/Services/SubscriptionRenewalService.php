@@ -83,7 +83,7 @@ class SubscriptionRenewalService
         // the original sign-up order's amount — plus the gateway service
         // charge, if admin set one.
         $amount = $this->currentPlanAmount($subscription, $order);
-        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'fiuu');
+        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'fiuu', null, \App\Support\GatewayFee::SUBSCRIPTION);
         $amount = round($amount + $gatewayFee, 2);
 
         $attempt = $failed + 1;
@@ -173,7 +173,7 @@ class SubscriptionRenewalService
         }
 
         $amount = $this->currentPlanAmount($subscription, $order);
-        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'gkash');
+        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'gkash', null, \App\Support\GatewayFee::SUBSCRIPTION);
         $amount = round($amount + $gatewayFee, 2);
         $attempt = $failed + 1;
         $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
@@ -264,7 +264,7 @@ class SubscriptionRenewalService
         }
 
         $amount = $this->currentPlanAmount($subscription, $order);
-        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'revenuemonster');
+        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'revenuemonster', null, \App\Support\GatewayFee::SUBSCRIPTION);
         $amount = round($amount + $gatewayFee, 2);
         $attempt = $failed + 1;
         $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;

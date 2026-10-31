@@ -1,0 +1,262 @@
+diff --git a/app/Support/GatewayFee.php b/app/Support/GatewayFee.php
+index 85aa94a..336ea56 100644
+--- a/app/Support/GatewayFee.php
++++ b/app/Support/GatewayFee.php
+@@ -8,8 +8,13 @@ use Illuminate\Support\Facades\Schema;
+ 
+ /**
+  * Payment gateway service charge: a % of the final amount (after voucher
+- * and SST), set per gateway by admin (Settings → Commission & Fee →
+- * Payment Gateway). 0% = no charge (the default).
++ * and SST), set by admin per gateway AND per payment kind (Settings →
++ * Commission & Fee → Payment Gateway). 0% = no charge (the default).
++ *
++ *   booking      → {gateway}_service_charge_percent
++ *                  (bookings, dry cleaning, bag purchases)
++ *   subscription → {gateway}_subscription_service_charge_percent
++ *                  (sign-up, card update, upgrade, monthly renewal)
+  *
+  * Added as its own line ("Payment gateway service charge") and included
+  * in orders.grand_total, so the gateway, the transaction record and the
+@@ -21,19 +26,39 @@ class GatewayFee
+ {
+     public const LABEL = 'Payment gateway service charge';
+ 
+-    public static function percent(?string $gateway, ?Setting $setting = null): float
++    public const BOOKING = 'booking';
++    public const SUBSCRIPTION = 'subscription';
++
++    /** Order types charged at the subscription rate. */
++    public const SUBSCRIPTION_ORDER_TYPES = [
++        Order::SUBSCRIPTION,
++        Order::SUBSCRIPTION_RENEWAL,
++        Order::SUBSCRIPTION_UPDATE,
++        Order::SUBSCRIPTION_UPGRADE,
++    ];
++
++    public static function kindForOrderType(?string $orderType): string
++    {
++        return in_array($orderType, self::SUBSCRIPTION_ORDER_TYPES, true) ? self::SUBSCRIPTION : self::BOOKING;
++    }
++
++    public static function percent(?string $gateway, ?Setting $setting = null, string $kind = self::BOOKING): float
+     {
+         $setting ??= Setting::find(1);
+         if (!$setting) {
+             return 0.0;
+         }
+-        $column = (in_array($gateway, ['gkash', 'revenuemonster'], true) ? $gateway : 'fiuu') . '_service_charge_percent';
+-        return max(0.0, (float) ($setting->$column ?? 0));
++        $gw = in_array($gateway, ['gkash', 'revenuemonster'], true) ? $gateway : 'fiuu';
++        $bookingColumn = "{$gw}_service_charge_percent";
++        $column = $kind === self::SUBSCRIPTION ? "{$gw}_subscription_service_charge_percent" : $bookingColumn;
++        // Before the migration runs, subscriptions fall back to the old single rate.
++        $value = $setting->getAttribute($column) ?? $setting->getAttribute($bookingColumn);
++        return max(0.0, (float) ($value ?? 0));
+     }
+ 
+-    public static function forAmount(float $amount, ?string $gateway, ?Setting $setting = null): float
++    public static function forAmount(float $amount, ?string $gateway, ?Setting $setting = null, string $kind = self::BOOKING): float
+     {
+-        $pct = self::percent($gateway, $setting);
++        $pct = self::percent($gateway, $setting, $kind);
+         if ($pct <= 0 || $amount <= 0) {
+             return 0.0;
+         }
+@@ -53,8 +78,9 @@ class GatewayFee
+         if (!Schema::hasColumn('orders', 'gateway_fee')) {
+             return; // migration not run yet
+         }
+-        $pct = self::percent($order->payment_gateway);
+-        $fee = self::forAmount((float) $order->grand_total, $order->payment_gateway);
++        $kind = self::kindForOrderType($order->order_type);
++        $pct = self::percent($order->payment_gateway, null, $kind);
++        $fee = self::forAmount((float) $order->grand_total, $order->payment_gateway, null, $kind);
+         if ($fee <= 0) {
+             return;
+         }
+@@ -83,7 +109,7 @@ class GatewayFee
+             'booking' => self::percent($setting->payment_gateway_booking ?? 'fiuu', $setting),
+             'dry_cleaning' => self::percent($setting->payment_gateway_dry_cleaning ?? 'fiuu', $setting),
+             'bag_purchase' => self::percent($setting->payment_gateway_bag_purchase ?? 'fiuu', $setting),
+-            'subscription' => self::percent($setting->payment_gateway_subscription ?? 'fiuu', $setting),
++            'subscription' => self::percent($setting->payment_gateway_subscription ?? 'fiuu', $setting, self::SUBSCRIPTION),
+         ];
+     }
+ }
+diff --git a/app/Services/SubscriptionRenewalService.php b/app/Services/SubscriptionRenewalService.php
+index d88242b..6885dbd 100644
+--- a/app/Services/SubscriptionRenewalService.php
++++ b/app/Services/SubscriptionRenewalService.php
+@@ -83,7 +83,7 @@ class SubscriptionRenewalService
+         // the original sign-up order's amount — plus the gateway service
+         // charge, if admin set one.
+         $amount = $this->currentPlanAmount($subscription, $order);
+-        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'fiuu');
++        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'fiuu', null, \App\Support\GatewayFee::SUBSCRIPTION);
+         $amount = round($amount + $gatewayFee, 2);
+ 
+         $attempt = $failed + 1;
+@@ -173,7 +173,7 @@ class SubscriptionRenewalService
+         }
+ 
+         $amount = $this->currentPlanAmount($subscription, $order);
+-        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'gkash');
++        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'gkash', null, \App\Support\GatewayFee::SUBSCRIPTION);
+         $amount = round($amount + $gatewayFee, 2);
+         $attempt = $failed + 1;
+         $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
+@@ -264,7 +264,7 @@ class SubscriptionRenewalService
+         }
+ 
+         $amount = $this->currentPlanAmount($subscription, $order);
+-        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'revenuemonster');
++        $gatewayFee = \App\Support\GatewayFee::forAmount($amount, 'revenuemonster', null, \App\Support\GatewayFee::SUBSCRIPTION);
+         $amount = round($amount + $gatewayFee, 2);
+         $attempt = $failed + 1;
+         $reference = SubscriptionRenewalCharge::REFERENCE_PREFIX . $subscription->id . '-' . Carbon::parse($cycle)->format('Ymd') . '-' . $attempt;
+diff --git a/app/Filament/Resources/SettingResource/Pages/EditSetting.php b/app/Filament/Resources/SettingResource/Pages/EditSetting.php
+index 8c52f92..25624cb 100644
+--- a/app/Filament/Resources/SettingResource/Pages/EditSetting.php
++++ b/app/Filament/Resources/SettingResource/Pages/EditSetting.php
+@@ -327,10 +327,13 @@ class EditSetting extends EditRecord
+                                                             ->native(false)
+                                                             ->helperText('Existing subscribers keep recurring on whichever gateway they originally signed up under, even after this changes.'),
+                                                     ]),
++                                                Placeholder::make('service_charge_booking_heading')
++                                                    ->label(false)
++                                                    ->content(new \Illuminate\Support\HtmlString('<strong>Service charge — bookings, dry cleaning & bag purchases</strong>')),
+                                                 Grid::make(3)
+                                                     ->schema([
+                                                         TextInput::make('fiuu_service_charge_percent')
+-                                                            ->label('Fiuu service charge')
++                                                            ->label('Fiuu — booking')
+                                                             ->numeric()
+                                                             ->minValue(0)
+                                                             ->maxValue(10)
+@@ -338,9 +341,9 @@ class EditSetting extends EditRecord
+                                                             ->suffix('%')
+                                                             ->default(0)
+                                                             ->required()
+-                                                            ->helperText('Added to the customer\'s total when paying through Fiuu. 0 = no charge.'),
++                                                            ->helperText('Bookings, dry cleaning and bag purchases paid through Fiuu. 0 = no charge.'),
+                                                         TextInput::make('gkash_service_charge_percent')
+-                                                            ->label('GKash service charge')
++                                                            ->label('GKash — booking')
+                                                             ->numeric()
+                                                             ->minValue(0)
+                                                             ->maxValue(10)
+@@ -348,9 +351,45 @@ class EditSetting extends EditRecord
+                                                             ->suffix('%')
+                                                             ->default(0)
+                                                             ->required()
+-                                                            ->helperText('Added to the customer\'s total when paying through GKash. 0 = no charge.'),
++                                                            ->helperText('Bookings, dry cleaning and bag purchases paid through GKash. 0 = no charge.'),
+                                                         TextInput::make('revenuemonster_service_charge_percent')
+-                                                            ->label('Revenue Monster service charge')
++                                                            ->label('Revenue Monster — booking')
++                                                            ->numeric()
++                                                            ->minValue(0)
++                                                            ->maxValue(10)
++                                                            ->step(0.01)
++                                                            ->suffix('%')
++                                                            ->default(0)
++                                                            ->required()
++                                                            ->helperText('Bookings, dry cleaning and bag purchases paid through Revenue Monster. 0 = no charge.'),
++                                                    ]),
++                                                Placeholder::make('service_charge_subscription_heading')
++                                                    ->label(false)
++                                                    ->content(new \Illuminate\Support\HtmlString('<strong>Service charge — subscriptions (sign-up, upgrade, renewal)</strong>')),
++                                                Grid::make(3)
++                                                    ->schema([
++                                                        TextInput::make('fiuu_subscription_service_charge_percent')
++                                                            ->label('Fiuu — subscription')
++                                                            ->numeric()
++                                                            ->minValue(0)
++                                                            ->maxValue(10)
++                                                            ->step(0.01)
++                                                            ->suffix('%')
++                                                            ->default(0)
++                                                            ->required()
++                                                            ->helperText('Subscription sign-up, card update, upgrade and monthly renewal through Fiuu. 0 = no charge.'),
++                                                        TextInput::make('gkash_subscription_service_charge_percent')
++                                                            ->label('GKash — subscription')
++                                                            ->numeric()
++                                                            ->minValue(0)
++                                                            ->maxValue(10)
++                                                            ->step(0.01)
++                                                            ->suffix('%')
++                                                            ->default(0)
++                                                            ->required()
++                                                            ->helperText('Subscription sign-up, card update, upgrade and monthly renewal through GKash. 0 = no charge.'),
++                                                        TextInput::make('revenuemonster_subscription_service_charge_percent')
++                                                            ->label('Revenue Monster — subscription')
+                                                             ->numeric()
+                                                             ->minValue(0)
+                                                             ->maxValue(10)
+@@ -358,11 +397,11 @@ class EditSetting extends EditRecord
+                                                             ->suffix('%')
+                                                             ->default(0)
+                                                             ->required()
+-                                                            ->helperText('Added to the customer\'s total when paying through Revenue Monster. 0 = no charge.'),
++                                                            ->helperText('Subscription sign-up, card update, upgrade and monthly renewal through Revenue Monster. 0 = no charge.'),
+                                                     ]),
+                                                 Placeholder::make('service_charge_note')
+                                                     ->label(false)
+-                                                    ->content('Applies to bookings, dry cleaning, bag purchases, subscription sign-ups/upgrades and monthly renewals, as % of the final total (after voucher and SST). Shown to the customer as "Payment gateway service charge" before they pay. Note: Bank Negara Malaysia does not allow surcharges on debit/credit card payments — confirm with Fiuu/GKash before setting a rate above 0.'),
++                                                    ->content('Each rate is a % of the final total (after voucher and SST). Shown to the customer as "Payment gateway service charge" before they pay. Note: Bank Negara Malaysia does not allow surcharges on debit/credit card payments — confirm with Fiuu/GKash before setting a rate above 0.'),
+                                             ]),
+ 
+                                     ]),
+diff --git a/database/migrations/2026_10_30_090000_add_subscription_service_charge_settings.php b/database/migrations/2026_10_30_090000_add_subscription_service_charge_settings.php
+new file mode 100644
+index 0000000..257488b
+--- /dev/null
++++ b/database/migrations/2026_10_30_090000_add_subscription_service_charge_settings.php
+@@ -0,0 +1,46 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\DB;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * Separate payment gateway service charge for subscription payments.
++ * The existing {gateway}_service_charge_percent columns now apply to
++ * bookings, dry cleaning and bag purchases; these new columns apply to
++ * subscription sign-ups, card updates, upgrades and monthly renewals.
++ * Each new column starts with the gateway's current value, so nothing
++ * changes until admin edits it.
++ */
++return new class extends Migration
++{
++    private const GATEWAYS = ['fiuu', 'gkash', 'revenuemonster'];
++
++    public function up(): void
++    {
++        foreach (self::GATEWAYS as $gw) {
++            $new = "{$gw}_subscription_service_charge_percent";
++            if (Schema::hasColumn('settings', $new)) {
++                continue;
++            }
++            Schema::table('settings', function (Blueprint $table) use ($new) {
++                $table->decimal($new, 5, 2)->default(0);
++            });
++            $old = "{$gw}_service_charge_percent";
++            if (Schema::hasColumn('settings', $old)) {
++                DB::table('settings')->update([$new => DB::raw($old)]);
++            }
++        }
++    }
++
++    public function down(): void
++    {
++        foreach (self::GATEWAYS as $gw) {
++            $col = "{$gw}_subscription_service_charge_percent";
++            if (Schema::hasColumn('settings', $col)) {
++                Schema::table('settings', fn (Blueprint $t) => $t->dropColumn($col));
++            }
++        }
++    }
++};
